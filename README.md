@@ -59,7 +59,7 @@ bun tools/build.mjs   # regenera EasyTrac.user.js, dist/easytrac.bundle.js y el 
 ## Actualizaciones
 
 La cabecera lleva `@updateURL` y `@downloadURL` al `EasyTrac.user.js` de `main`, y cada
-`@require` apunta a un tag fijo: `…/easytrac@v1.0.0/src/…`. Así Tampermonkey compara
+`@require` apunta a un tag fijo: `…/easytrac@vX.Y.Z/src/…`. Así Tampermonkey compara
 `@version` y, cuando sube, descarga módulos de la versión nueva, nunca de una caché vieja
 de jsDelivr.
 
