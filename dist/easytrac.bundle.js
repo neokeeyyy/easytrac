@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.13'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.14'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}

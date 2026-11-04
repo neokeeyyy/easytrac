@@ -107,4 +107,6 @@ test('el loader apunta a un módulo por archivo y no pide grants', () => {
   expect(requires.filter((l) => l.includes('/src/')).length).toBe(15);
   expect(head).toContain('// @grant        none');
   expect(head).toContain('@match        https://siretrac.cne.gob.mx/*');
+  /* Sin esto la copia modular reporta 0.0.0-dev y el aviso de versión miente. */
+  expect(head).toContain("EasyTrac.version = '" + VERSION + "'");
 });
