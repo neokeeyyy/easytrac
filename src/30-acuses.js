@@ -1079,8 +1079,17 @@
       $('#sa-d1').value = isoFecha(s.lunes);
       $('#sa-d2').value = isoFecha(s.domingo);
     });
-    $('#sa-d1').addEventListener('input', () => { $('#sa-sem').value = ''; });
-    $('#sa-d2').addEventListener('input', () => { $('#sa-sem').value = ''; });
+    /* Al escribir a mano, el rango se ajusta a su semana: lunes a domingo. */
+    $('#sa-d1').addEventListener('change', () => {
+      const s = semanaDe($('#sa-d1').value);
+      if (s) $('#sa-d1').value = s.lunes;
+      $('#sa-sem').value = '';
+    });
+    $('#sa-d2').addEventListener('change', () => {
+      const s = semanaDe($('#sa-d2').value);
+      if (s) $('#sa-d2').value = s.domingo;
+      $('#sa-sem').value = '';
+    });
 
     $('#sa-an').addEventListener('click', () => { analizar().catch(e => { if (!abortado(e)) st('Error: ' + e.message); }); });
     $('#sa-zip').addEventListener('click', () => { descargarZip().catch(e => { if (!abortado(e)) st('Error: ' + e.message); }); });

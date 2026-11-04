@@ -45,12 +45,15 @@ test('boots on a GasLP page with the shared sidebar', async () => {
 test('ACS arranca sin vehiculo, placas ni fechas de otra empresa', async () => {
   const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
   const doc = win.document;
-  const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const hasta = doc.querySelector('#acs-hasta').value;
+  const desde = doc.querySelector('#acs-desde').value;
 
   expect(doc.querySelector('#acs-vehiculo').value).toBe('');
   expect(doc.querySelector('#acs-placas').value).toBe('');
-  expect(doc.querySelector('#acs-hasta').value).toBe(iso(new Date()));
-  expect(doc.querySelector('#acs-desde').value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  // Por defecto, la semana pasada completa: lunes a domingo.
+  expect(new Date(desde + 'T00:00:00').getDay()).toBe(1);
+  expect(new Date(hasta + 'T00:00:00').getDay()).toBe(0);
+  expect(Math.round((new Date(hasta) - new Date(desde)) / 86400000)).toBe(6);
 });
 
 test('acuses stays out of pages it cannot work on', async () => {

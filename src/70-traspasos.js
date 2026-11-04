@@ -247,6 +247,24 @@
     return makeISO(now.getFullYear(), now.getMonth() + 1, now.getDate());
   }
 
+  // Lunes de la semana que contiene la fecha (sin desplazarla a la anterior).
+  function mondayISO(iso) {
+    const p = String(iso || '').split('-');
+    if (p.length !== 3) return '';
+    const d = new Date(+p[0], +p[1] - 1, +p[2]);
+    if (Number.isNaN(d.getTime())) return '';
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return makeISO(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  }
+
+  function sundayISO(iso) {
+    const l = mondayISO(iso);
+    if (!l) return '';
+    const [y, m, day] = l.split('-').map(Number);
+    const d = new Date(y, m - 1, day + 6);
+    return makeISO(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  }
+
   function resolveHeaderDate(header, weekStart) {
     const direct = parseDate(header);
     if (direct) return direct;
@@ -3407,7 +3425,13 @@
     importLegacySource();
     ui.sourceScId.value = state.sourceScId;
     ui.weekStart.value = previousMondayISO();
-    ui.registrationDate.value = todayISO();
+    ui.registrationDate.value = sundayISO(ui.weekStart.value);
+    ui.weekStart.addEventListener('change', () => {
+      const lunes = mondayISO(ui.weekStart.value);
+      if (!lunes) return;
+      ui.weekStart.value = lunes;
+      ui.registrationDate.value = sundayISO(lunes);
+    });
     renderPresets('');
     bindEvents();
     renderEnvio();

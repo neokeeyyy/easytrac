@@ -4,7 +4,8 @@
   'use strict';
   var ET = globalThis.EasyTrac;
   var pad2 = ET.core.dates.pad2, toISO = ET.core.dates.toISO, isoToDMA = ET.core.dates.isoToDMA,
-    parseDia = ET.core.dates.parseDia, parseISO = ET.core.dates.parseISO, ahoraHora = ET.core.dates.ahoraHora;
+    parseDia = ET.core.dates.parseDia, parseISO = ET.core.dates.parseISO, ahoraHora = ET.core.dates.ahoraHora,
+    semanaAnterior = ET.core.dates.semanaAnterior, semanaDe = ET.core.dates.semanaDe;
   var limpiarHtml = ET.core.text.limpiarHtml, pick = ET.core.text.pick,
     matchInput = ET.core.text.matchInput, matchText = ET.core.text.matchText;
   var esperarMs = ET.core.http.esperarMs, textoRespuesta = ET.core.http.textoRespuesta,
@@ -38,11 +39,11 @@
   function cargarConfig() {
     try { Object.assign(CONFIG, DEFAULTS, ET.store.get('acs_cfg', {})); }
     catch (e) { Object.assign(CONFIG, DEFAULTS); }
-    /* Sin fechas guardadas, último tramo de 7 días: ningún dato de otra empresa. */
+    /* Sin fechas guardadas, la semana pasada completa (lunes a domingo). */
     if (!CONFIG.DESDE || !CONFIG.HASTA) {
-      var hoy = new Date();
-      CONFIG.DESDE = CONFIG.DESDE || toISO(new Date(hoy.getTime() - 6 * 86400000));
-      CONFIG.HASTA = CONFIG.HASTA || toISO(hoy);
+      var sem = semanaAnterior();
+      CONFIG.DESDE = CONFIG.DESDE || sem.lunes;
+      CONFIG.HASTA = CONFIG.HASTA || sem.domingo;
     }
   }
   function guardarConfig() { ET.store.set('acs_cfg', CONFIG); }
@@ -1256,6 +1257,9 @@
     var CAMPOS = { 'acs-desde': 'DESDE', 'acs-hasta': 'HASTA', 'acs-vehiculo': 'VEHICULO', 'acs-placas': 'PLACAS', 'acs-motivo': 'MOTIVO_CIERRE', 'acs-delay': 'DELAY_MS' };
     Object.keys(CAMPOS).forEach(function (id) {
       panel.querySelector('#' + id).addEventListener('change', function () {
+        /* Desde siempre lunes, hasta siempre domingo: se ajusta a la semana elegida. */
+        if (id === 'acs-desde' && this.value) this.value = semanaDe(this.value).lunes;
+        if (id === 'acs-hasta' && this.value) this.value = semanaDe(this.value).domingo;
         CONFIG[CAMPOS[id]] = id === 'acs-delay' ? (+this.value || 0) : this.value;
         guardarConfig();
       });
