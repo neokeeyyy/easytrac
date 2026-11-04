@@ -56,6 +56,32 @@ bun tools/syntax.mjs
 bun tools/build.mjs   # regenera EasyTrac.user.js, dist/easytrac.bundle.js y el standalone
 ```
 
+## Actualizaciones
+
+La cabecera lleva `@updateURL` y `@downloadURL` al `EasyTrac.user.js` de `main`, y cada
+`@require` apunta a un tag fijo: `…/easytrac@v1.0.0/src/…`. Así Tampermonkey compara
+`@version` y, cuando sube, descarga módulos de la versión nueva, nunca de una caché vieja
+de jsDelivr.
+
+Un release es un comando:
+
+```powershell
+bun tools/release.mjs patch "arreglo del grid"      # o minor / major / 1.2.0
+bun tools/release.mjs patch "solo local" --no-push
+```
+
+Hace las pruebas, sube la versión en `package.json`, reconstruye, hace commit, crea el tag
+`vX.Y.Z` y empuja con `--follow-tags`. Sin tag en GitHub, jsDelivr no resuelve los módulos:
+por eso el tag viaja junto al push.
+
+Primera publicación del repositorio:
+
+```powershell
+git remote add origin https://github.com/OWNER/easytrac.git
+git push -u origin main --follow-tags
+```
+
+
 ## Decisiones
 
 - **`@grant none`**: ACUSES, Venta y Fecha dependen del jQuery de la página y con grants lo pierden. Las cuatro llamadas `GM_*` de ACS pasaron a `ET.store` y a `<a download>`.
