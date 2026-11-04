@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.15
+// @version      1.0.16
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -24,7 +24,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.15'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.16'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -206,6 +206,15 @@
 
   function ahoraHora() { var d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); }
 
+  /* Weeks run Monday to Sunday: every range the toolkit shows starts on a Monday. */
+  function lunesDe(v) { var d = typeof v === 'string' ? parseISO(v) : new Date(v.getTime()); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); d.setHours(0, 0, 0, 0); return d; }
+
+  function domingoDe(v) { var d = lunesDe(v); d.setDate(d.getDate() + 6); return d; }
+
+  function semanaDe(v) { return { lunes: toISO(lunesDe(v)), domingo: toISO(domingoDe(v)) }; }
+
+  function semanaAnterior() { var d = lunesDe(new Date()); d.setDate(d.getDate() - 7); return { lunes: toISO(d), domingo: toISO(domingoDe(d)) }; }
+
   ET.core = ET.core || {};
   ET.core.dates = {
     pad2: pad2,
@@ -213,8 +222,14 @@
     isoToDMA: isoToDMA,
     parseDia: parseDia,
     parseISO: parseISO,
-    ahoraHora: ahoraHora
+    ahoraHora: ahoraHora,
+    lunesDe: lunesDe,
+    domingoDe: domingoDe,
+    semanaDe: semanaDe,
+    semanaAnterior: semanaAnterior
   };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = ET.core.dates;
 })();
 
 /* ---- src/05-text.js ---- */
@@ -528,6 +543,7 @@
 
   ET.ui = ET.ui || {};
   ET.ui.tab = tab;
+  ET.ui.activar = activar;
   ET.ui.root = function () { return root; };
   ET.ui.style = function (css) {
     style();
@@ -840,6 +856,279 @@
   }
 })();
 
+/* ---- src/14-ui-config.js ---- */
+/* EasyTrac Ajustes: one panel for every persistent option.
+   Each field reads and writes the store that already owned it (acs_cfg, traspasos CONFIG),
+   so this module never keeps a parallel copy of the configuration. */
+(function () {
+  'use strict';
+  var ET = globalThis.EasyTrac;
+  var VISTO = 'cfg_visto';
+
+  var campos = [];
+  var porClave = {};
+  var pane = null;
+  var modal = null, btnGuardar = null, abierto = false, atajo = null;
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function add(c) {
+    if (!c || !c.clave || porClave[c.clave]) return;
+    c.seccion = c.seccion || 'General';
+    c.tipo = c.tipo || 'text';
+    porClave[c.clave] = c;
+    campos.push(c);
+    if (pane) pintarCampos();
+  }
+
+  function leer(c) {
+    try { return c.leer ? c.leer() : ET.store.get(c.clave, c.defecto); }
+    catch (e) { return c.defecto; }
+  }
+
+  function valor(clave, defecto) {
+    var c = porClave[clave];
+    if (!c) return defecto;
+    var v = leer(c);
+    return v == null ? (defecto === undefined ? c.defecto : defecto) : v;
+  }
+
+  function set(clave, v) {
+    var c = porClave[clave];
+    if (!c) return;
+    if (c.tipo === 'number') v = Math.max(0, +v || 0);
+    if (c.tipo === 'check') v = !!v;
+    try { if (c.guardar) c.guardar(v); else ET.store.set(clave, v); } catch (e) {}
+  }
+
+  function necesitaRevision(guardado, version) {
+    return String(guardado || '') !== String(version || '');
+  }
+
+  /* Lista de vehículos: una línea por vehículo, `nombre|placas` o solo `placas`.
+     El tercer campo opcional es el id de SIRETRAC, si ya se conoce. */
+  function parseVehiculos(texto) {
+    var vistos = {};
+    var lista = [];
+    String(texto == null ? '' : texto).split(/\r?\n/).forEach(function (linea) {
+      var partes = String(linea).split('|');
+      var nombre = partes.length > 1 ? String(partes[0]).trim() : '';
+      var placas = String(partes.length > 1 ? partes[1] : partes[0]).trim();
+      var id = partes.length > 2 ? String(partes[2]).trim() : '';
+      if (!placas) return;
+      var clave = placas.toUpperCase().replace(/\s+/g, '');
+      if (vistos[clave]) return;
+      vistos[clave] = true;
+      lista.push({ nombre: nombre, placas: placas, id: id });
+    });
+    return lista;
+  }
+
+  function vehiculos() {
+    return parseVehiculos(valor('acs.vehiculos', ''));
+  }
+
+  function marcarVisto(version) {
+    var v = version === undefined ? ET.version : version;
+    ET.store.set(VISTO, v);
+    return v;
+  }
+
+  /* ---------- pane ---------- */
+
+  function campoHtml(c) {
+    var id = 'cfg-' + c.clave.replace(/[^a-z0-9]+/gi, '-');
+    var v = leer(c);
+    if (v == null) v = c.defecto;
+    var attrs = ' id="' + id + '" data-clave="' + esc(c.clave) + '"';
+    var html = '<div class="etcfg-campo etcfg-' + esc(c.tipo) + '">';
+    if (c.tipo === 'check') {
+      html += '<label for="' + id + '"><input type="checkbox"' + attrs + (v ? ' checked' : '') + '> ' + esc(c.etiqueta) + '</label>';
+    } else if (c.tipo === 'select') {
+      html += '<label for="' + id + '">' + esc(c.etiqueta) + '</label><select' + attrs + '>';
+      (c.opciones || []).forEach(function (o) {
+        var ov = typeof o === 'object' ? o.valor : o;
+        var ot = typeof o === 'object' ? o.texto : o;
+        html += '<option value="' + esc(ov) + '"' + (String(ov) === String(v) ? ' selected' : '') + '>' + esc(ot) + '</option>';
+      });
+      html += '</select>';
+    } else if (c.tipo === 'textarea') {
+      html += '<label for="' + id + '">' + esc(c.etiqueta) + '</label>' +
+        '<textarea' + attrs + ' rows="4">' + esc(v) + '</textarea>';
+    } else {
+      var tipo = c.tipo === 'number' ? 'number' : 'text';
+      html += '<label for="' + id + '">' + esc(c.etiqueta) + '</label>' +
+        '<input type="' + tipo + '"' + attrs + ' value="' + esc(v) + '"' +
+        (tipo === 'number' ? ' min="0" step="100"' : '') + '>';
+    }
+    return html + '</div>';
+  }
+
+  function pintarCampos() {
+    if (!pane) return;
+    var secciones = [], porSeccion = {};
+    campos.forEach(function (c) {
+      if (!porSeccion[c.seccion]) { porSeccion[c.seccion] = []; secciones.push(c.seccion); }
+      porSeccion[c.seccion].push(c);
+    });
+    var html = '<p class="etcfg-hint">Se guarda al cambiar cada campo. Revísalos antes de procesar.</p>';
+    secciones.forEach(function (s) {
+      html += '<section class="etcfg-sec"><h3>' + esc(s) + '</h3>' +
+        porSeccion[s].map(campoHtml).join('') + '</section>';
+    });
+    if (!secciones.length) html += '<p class="etcfg-hint">No hay opciones configurables.</p>';
+    pane.innerHTML = html;
+  }
+
+  function crearPane() {
+    var p = ET.ui.tab('ajustes', 'Ajustes', 90, 420);
+    p.id = 'etcfg-pane';
+    p.addEventListener('change', function (ev) {
+      var el = ev.target;
+      var clave = el && el.getAttribute && el.getAttribute('data-clave');
+      if (!clave) return;
+      set(clave, el.type === 'checkbox' ? el.checked : el.value);
+    });
+    return p;
+  }
+
+  function pintar() {
+    if (!pane) {
+      pane = crearPane();
+      (ET.ui.style || function () {})(CSS);
+    }
+    pintarCampos();
+    return pane;
+  }
+
+  function abrir() {
+    pintar();
+    if (ET.ui.activar) ET.ui.activar('ajustes', true);
+    abierto = true;
+    if (btnGuardar) btnGuardar.disabled = false;
+  }
+
+  /* ---------- revisión obligatoria ---------- */
+
+  function guardarVisto() {
+    if (!abierto) return;
+    marcarVisto(ET.version);
+    if (atajo) document.removeEventListener('keydown', atajo, true);
+    atajo = null;
+    if (modal && modal.parentNode) modal.parentNode.removeChild(modal);
+    modal = null;
+    btnGuardar = null;
+  }
+
+  function mostrarModal() {
+    (ET.ui.style || function () {})(CSS);
+    modal = document.createElement('div');
+    modal.id = 'etcfg-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'etcfg-modal-t');
+    modal.innerHTML =
+      '<div id="etcfg-caja">' +
+      '  <h2 id="etcfg-modal-t">Revisa la configuración</h2>' +
+      '  <p class="etcfg-modal-txt">Antes de usar el toolkit revisa los ajustes de esta versión. ' +
+      'Puedes cambiar el vehículo, las placas, las esperas y el resto de opciones desde la pestaña Ajustes.</p>' +
+      '  <p class="etcfg-modal-ver">Versión instalada: <strong>' + esc(ET.version) + '</strong></p>' +
+      '  <div class="etcfg-modal-acc">' +
+      '    <button type="button" id="etcfg-ir">Abrir Ajustes</button>' +
+      '    <button type="button" id="etcfg-ok" disabled>Guardar y continuar</button>' +
+      '  </div>' +
+      '</div>';
+    document.body.appendChild(modal);
+    btnGuardar = modal.querySelector('#etcfg-ok');
+
+    modal.querySelector('#etcfg-ir').addEventListener('click', function () {
+      abrir();
+      modal.classList.add('etcfg-min');
+      var txt = modal.querySelector('.etcfg-modal-txt');
+      if (txt) txt.textContent = 'Ajustes abiertos. Cuando termines de revisarlos, guarda y continúa.';
+    });
+    btnGuardar.addEventListener('click', guardarVisto);
+    /* Esc y el clic fuera no cierran: solo «Guardar y continuar». */
+    atajo = function (ev) { if (modal && ev.key === 'Escape') ev.preventDefault(); };
+    document.addEventListener('keydown', atajo, true);
+    modal.addEventListener('click', function (ev) { if (ev.target === modal) ev.stopPropagation(); });
+    modal.querySelector('#etcfg-ir').focus();
+  }
+
+  function revisar() {
+    if (!necesitaRevision(ET.store.get(VISTO, ''), ET.version)) return;
+    if (!modal) mostrarModal();
+  }
+
+  /* ---------- CSS (house-ui: Geist Pixel 400, plano, esquinas rectas, paleta --ui-*) ---------- */
+
+  var CSS =
+    '#etcfg-pane{font-family:var(--ui-font);font-size:14px;line-height:1.43;color:var(--ui-fg);}' +
+    '#etcfg-pane *{box-sizing:border-box;}' +
+    '#etcfg-pane .etcfg-hint{margin:0 0 12px;color:var(--ui-muted);font-size:13px;}' +
+    '#etcfg-pane .etcfg-sec{margin:0 0 14px;padding:0 0 12px;border-bottom:1px solid var(--ui-border);}' +
+    '#etcfg-pane .etcfg-sec:last-child{border-bottom:0;}' +
+    '#etcfg-pane h3{margin:0 0 8px;font-size:12px;font-weight:400;text-transform:uppercase;letter-spacing:.04em;color:var(--ui-muted);}' +
+    '#etcfg-pane .etcfg-campo{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 10px;align-items:center;margin:0 0 8px;}' +
+    '#etcfg-pane .etcfg-check{grid-template-columns:minmax(0,1fr);}' +
+    '#etcfg-pane .etcfg-check label{display:flex;align-items:center;gap:7px;}' +
+    '#etcfg-pane label{font-size:13px;font-weight:400;color:var(--ui-fg);margin:0;}' +
+    '#etcfg-pane input[type=text],#etcfg-pane input[type=number],#etcfg-pane select,#etcfg-pane textarea{width:100%;min-width:0;max-width:100%;padding:6px 7px;' +
+    'border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;}' +
+    '#etcfg-pane textarea{resize:vertical;min-height:72px;}' +
+    '#etcfg-pane input[type=checkbox]{width:16px;height:16px;flex:0 0 auto;margin:0;accent-color:var(--ui-primary);}' +
+    '#etcfg-pane input:focus,#etcfg-pane select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
+    '#etcfg-modal{position:fixed;inset:0;z-index:2147483100;display:flex;align-items:center;justify-content:center;padding:16px;' +
+    'background:rgba(51,51,51,.55);font:400 14px/1.43 var(--ui-font);color:var(--ui-fg);box-sizing:border-box;}' +
+    '#etcfg-modal *{box-sizing:border-box;}' +
+    '#etcfg-modal #etcfg-caja{width:min(420px,100%);background:var(--ui-bg);border:1px solid var(--ui-border-strong);padding:16px;' +
+    'animation:etcfg-in 320ms cubic-bezier(.34,1.56,.64,1) both;}' +
+    '#etcfg-caja h2{margin:0 0 8px;font-size:16px;font-weight:400;}' +
+    '#etcfg-caja .etcfg-modal-txt{margin:0 0 8px;}' +
+    '#etcfg-caja .etcfg-modal-ver{margin:0 0 14px;color:var(--ui-muted);font-size:13px;}' +
+    '#etcfg-caja .etcfg-modal-acc{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;}' +
+    '#etcfg-caja button{font:400 13px/1 var(--ui-font);padding:8px 11px;border:1px solid var(--ui-border-input);' +
+    'background:var(--ui-bg);color:var(--ui-fg);border-radius:0;cursor:pointer;transition:background 120ms linear,transform 140ms var(--shub-spring);}' +
+    '#etcfg-caja button:hover:enabled{background:#f5f5f5;}' +
+    '#etcfg-caja button:active:enabled{transform:scale(.97);}' +
+    '#etcfg-caja button:focus-visible{outline:2px solid var(--ui-focus);outline-offset:1px;}' +
+    '#etcfg-caja #etcfg-ok{background:var(--ui-primary);border-color:var(--ui-primary);color:#fff;}' +
+    '#etcfg-caja #etcfg-ok:hover:enabled{background:var(--ui-primary-hover);border-color:var(--ui-primary-hover);}' +
+    '#etcfg-caja #etcfg-ok:disabled{background:var(--ui-bg);border-color:var(--ui-border);color:var(--ui-muted);cursor:not-allowed;}' +
+    /* Revisión abierta: el cuadro se aparta a la esquina y la página queda usable. */
+    '#etcfg-modal.etcfg-min{background:transparent;pointer-events:none;align-items:flex-end;justify-content:flex-start;}' +
+    '#etcfg-modal.etcfg-min #etcfg-caja{pointer-events:auto;width:min(320px,100%);}' +
+    '#etcfg-modal.etcfg-min #etcfg-ir{display:none;}' +
+    '@keyframes etcfg-in{0%{opacity:0;transform:translateY(14px) scale(.97)}100%{opacity:1;transform:none}}' +
+    '@media (prefers-reduced-motion:reduce){#etcfg-caja{animation:none}}';
+
+  ET.config = {
+    add: add,
+    valor: valor,
+    set: set,
+    abrir: abrir,
+    revisar: revisar,
+    necesitaRevision: necesitaRevision,
+    marcarVisto: marcarVisto,
+    parseVehiculos: parseVehiculos,
+    vehiculos: vehiculos,
+    campos: function () { return campos.slice(); },
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = ET.config;
+
+  if (typeof document !== 'undefined' && ET.ready) {
+    ET.ready(function () {
+      pintar();
+      revisar();
+    });
+  }
+})();
+
 /* ---- src/20-acs.js ---- */
 /* EasyTrac ACS
    Accept, dispatch, receive, close purchases and build the transfer PDF. */
@@ -847,7 +1136,8 @@
   'use strict';
   var ET = globalThis.EasyTrac;
   var pad2 = ET.core.dates.pad2, toISO = ET.core.dates.toISO, isoToDMA = ET.core.dates.isoToDMA,
-    parseDia = ET.core.dates.parseDia, parseISO = ET.core.dates.parseISO, ahoraHora = ET.core.dates.ahoraHora;
+    parseDia = ET.core.dates.parseDia, parseISO = ET.core.dates.parseISO, ahoraHora = ET.core.dates.ahoraHora,
+    semanaAnterior = ET.core.dates.semanaAnterior, semanaDe = ET.core.dates.semanaDe;
   var limpiarHtml = ET.core.text.limpiarHtml, pick = ET.core.text.pick,
     matchInput = ET.core.text.matchInput, matchText = ET.core.text.matchText;
   var esperarMs = ET.core.http.esperarMs, textoRespuesta = ET.core.http.textoRespuesta,
@@ -861,8 +1151,9 @@
   var DEFAULTS = {
     DESDE: '',                  // rango de fechaCompra (Aceptar/Despachar) y fechaDespacho (Recepcionar)
     HASTA: '',                  // vacío = últimos 7 días, ver cargarConfig
-    VEHICULO: '',               // lo llena cada empresa en Ajustes (Despachar)
-    PLACAS: '',                 // idem
+    VEHICULO: '',               // compatibilidad: vehículo único de versiones anteriores
+    PLACAS: '',                 // compatibilidad: placas del vehículo único
+    VEHICULOS: '',              // lista: una línea por vehículo, `nombre|placas` o `placas`
     DELAY_MS: 800,              // espera entre operaciones
     DATA_RETRIES: 3,            // reintentos solo para consultas
     DATA_RETRY_BASE_MS: 100,    // backoff inicial de consultas
@@ -881,11 +1172,11 @@
   function cargarConfig() {
     try { Object.assign(CONFIG, DEFAULTS, ET.store.get('acs_cfg', {})); }
     catch (e) { Object.assign(CONFIG, DEFAULTS); }
-    /* Sin fechas guardadas, último tramo de 7 días: ningún dato de otra empresa. */
+    /* Sin fechas guardadas, la semana pasada completa (lunes a domingo). */
     if (!CONFIG.DESDE || !CONFIG.HASTA) {
-      var hoy = new Date();
-      CONFIG.DESDE = CONFIG.DESDE || toISO(new Date(hoy.getTime() - 6 * 86400000));
-      CONFIG.HASTA = CONFIG.HASTA || toISO(hoy);
+      var sem = semanaAnterior();
+      CONFIG.DESDE = CONFIG.DESDE || sem.lunes;
+      CONFIG.HASTA = CONFIG.HASTA || sem.domingo;
     }
   }
   function guardarConfig() { ET.store.set('acs_cfg', CONFIG); }
@@ -1939,15 +2230,6 @@
       '  <label for="acs-hasta">Hasta</label><input type="date" id="acs-hasta" value="' + CONFIG.HASTA + '" title="Fecha de compra; en Recepcionar es la fecha de despacho">' +
       '  <label for="acs-permiso">Permiso</label><select id="acs-permiso" title="Permiso vendedor; Todos = sin filtro"><option value="">Todos los permisos</option></select>' +
       '  <label class="acs-opt" title="Recorre cada permiso de la sesión en lugar de solo el actual"><input type="checkbox" id="acs-permisos" ' + (CONFIG.RECORRER_PERMISOS ? 'checked' : '') + '> Recorrer permisos</label>' +
-      '  <button type="button" id="acs-cfg-toggle" title="Mostrar u ocultar ajustes"><i class="fa-solid fa-gear"></i> Ajustes</button>' +
-      '</div>' +
-      '<div id="acs-cfg">' +
-      '  <label for="acs-vehiculo">Vehículo</label><input type="text" id="acs-vehiculo" value="' + CONFIG.VEHICULO + '">' +
-      '  <label for="acs-placas">Placas</label><input type="text" id="acs-placas" value="' + CONFIG.PLACAS + '">' +
-      '  <label for="acs-delay">Espera (ms)</label><input type="number" id="acs-delay" value="' + CONFIG.DELAY_MS + '" min="0" step="100" title="Pausa entre operaciones">' +
-      '  <label for="acs-motivo">Motivo cierre</label><input type="text" id="acs-motivo" value="' + (CONFIG.MOTIVO_CIERRE || '') + '" placeholder="Mínimo 5 caracteres">' +
-      '  <label class="acs-opt"><input type="checkbox" id="acs-cerrar" ' + (CONFIG.CERRAR_AL_RECEPCIONAR ? 'checked' : '') + '> Cerrar al recepcionar</label>' +
-      '  <label class="acs-opt"><input type="checkbox" id="acs-verbose" ' + (CONFIG.VERBOSE ? 'checked' : '') + '> Registro detallado</label>' +
       '</div>' +
       '<ul id="acs-tabs" role="tablist">' +
       '  <li data-tab="inicio" class="on" role="tab" aria-selected="true">Inicio</li>' +
@@ -1963,7 +2245,7 @@
       '  <div class="acs-pane" id="acs-pane-despachar" style="display:none">Despacha compras <b>Aceptadas</b> con el vehículo y placas configurados.</div>' +
       '  <div class="acs-pane" id="acs-pane-recepcionar" style="display:none">Recepciona entregas <b>En tránsito</b>. Si está activo, cierra la compra al recepcionar.</div>' +
       '  <div class="acs-pane" id="acs-pane-cerrar" style="display:none">Lista compras <b>Aceptadas</b> sin cerrar. Selecciona y usa <b>Cerrar seleccionadas</b>.</div>' +
-      '  <div class="acs-pane" id="acs-pane-facturas" style="display:none"><div>Sube formatos de traspaso de compras cerradas sin factura y descarga los formatos PDF de las compras cerradas dentro del rango.</div><label class="acs-opt"><input type="checkbox" id="acs-incluir-nocerradas" ' + (CONFIG.INCLUIR_NO_CERRADAS_FACT ? 'checked' : '') + '> Incluir compras no cerradas</label></div>' +
+      '  <div class="acs-pane" id="acs-pane-facturas" style="display:none"><div>Sube formatos de traspaso de compras cerradas sin factura y descarga los formatos PDF de las compras cerradas dentro del rango.</div></div>' +
       '  <div id="acs-facturas-acciones" style="display:none">' +
       '    <button id="acs-refrescar-facturas" class="acs-btn"><i class="fa-solid fa-rotate"></i> Actualizar</button>' +
       '    <button id="acs-subir-facturas" class="acs-btn"><i class="fa-solid fa-cloud-arrow-up"></i> Subir</button>' +
@@ -2056,10 +2338,6 @@
     panel.querySelector('#acs-descargar-formatos').addEventListener('click', function () {
       descargarFormatosRango();
     });
-    panel.querySelector('#acs-incluir-nocerradas').addEventListener('change', function () {
-      CONFIG.INCLUIR_NO_CERRADAS_FACT = this.checked;
-      guardarConfig();
-    });
     panel.querySelector('#acs-detener-facturas').addEventListener('click', detener);
     panel.querySelector('#acs-tabla tbody').addEventListener('change', actualizarResumen);
     panel.querySelector('#acs-cerrar-sel').addEventListener('click', function () {
@@ -2086,20 +2364,16 @@
       setTab(tabActiva, false);
     }
 
-    panel.querySelector('#acs-cfg-toggle').addEventListener('click', function () {
-      var cfg = panel.querySelector('#acs-cfg');
-      cfg.classList.toggle('acs-open');
-    });
-
-    panel.querySelector('#acs-cerrar').addEventListener('change', function () { CONFIG.CERRAR_AL_RECEPCIONAR = this.checked; guardarConfig(); });
-    panel.querySelector('#acs-verbose').addEventListener('change', function () { CONFIG.VERBOSE = this.checked; guardarConfig(); });
     panel.querySelector('#acs-permisos').addEventListener('change', function () { CONFIG.RECORRER_PERMISOS = this.checked; guardarConfig(); });
     panel.querySelector('#acs-permiso').addEventListener('change', function () { CONFIG.PERMISO_FILTRO = this.value; guardarConfig(); });
 
-    var CAMPOS = { 'acs-desde': 'DESDE', 'acs-hasta': 'HASTA', 'acs-vehiculo': 'VEHICULO', 'acs-placas': 'PLACAS', 'acs-motivo': 'MOTIVO_CIERRE', 'acs-delay': 'DELAY_MS' };
+    var CAMPOS = { 'acs-desde': 'DESDE', 'acs-hasta': 'HASTA' };
     Object.keys(CAMPOS).forEach(function (id) {
       panel.querySelector('#' + id).addEventListener('change', function () {
-        CONFIG[CAMPOS[id]] = id === 'acs-delay' ? (+this.value || 0) : this.value;
+        /* Desde siempre lunes, hasta siempre domingo: se ajusta a la semana elegida. */
+        if (id === 'acs-desde' && this.value) this.value = semanaDe(this.value).lunes;
+        if (id === 'acs-hasta' && this.value) this.value = semanaDe(this.value).domingo;
+        CONFIG[CAMPOS[id]] = this.value;
         guardarConfig();
       });
     });
@@ -2123,16 +2397,7 @@
     '#acs-topbar label{font-size:13px;color:var(--ui-muted);margin:0;font-weight: 400;}' +
     '#acs-topbar input[type=date],#acs-topbar select{border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;padding:4px 6px;max-width:180px;cursor:pointer;}' +
     '#acs-topbar .acs-opt{margin-left:8px;}' +
-    '#acs-cfg-toggle{cursor:pointer;font:inherit;font-size:13px;margin-left:auto;color:var(--ui-fg);border:1px solid var(--ui-border-input);border-radius:0;background:#f5f5f5;padding:4px 8px;}' +
-    '#acs-cfg-toggle:hover{background:#e9e9e9;}' +
-    '#acs-cfg-toggle:focus-visible{outline:2px solid var(--ui-focus);outline-offset:1px;}' +
-    '#acs-cfg{display:none;grid-template-columns:max-content minmax(0,1fr) max-content minmax(0,1fr);gap:8px 10px;align-items:center;padding:10px 12px;background:#f5f5f5;border-bottom:1px solid var(--ui-border);}' +
-    '#acs-cfg.acs-open{display:grid;}' +
-    '#acs-cfg .acs-opt{grid-column:span 2;display:flex;align-items:center;gap:6px;white-space:nowrap;}' +
-    '#acs-cfg label{color:var(--ui-fg);font-size:13px;margin:0;font-weight: 400;}' +
-    '#acs-cfg input,#acs-cfg select{border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:12px;padding:5px 6px;min-width:0;width:100%;}' +
-    '#acs-cfg input[type="checkbox"]{width:16px;height:16px;flex:0 0 auto;margin:0;accent-color:var(--ui-primary);}' +
-    '#acs-topbar input:focus,#acs-topbar select:focus,#acs-cfg input:focus,#acs-cfg select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
+    '#acs-topbar input:focus,#acs-topbar select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
     '.acs-opt{color:var(--ui-fg);display:flex;align-items:center;gap:6px;font-size:13px;}' +
     '.acs-opt input{width:14px;height:14px;margin:0;cursor:pointer;}' +
     '.acs-pane{padding:10px 12px;font-size:13px;color:var(--ui-muted);background:var(--ui-bg);border-bottom:1px solid var(--ui-border);}' +
@@ -2181,14 +2446,47 @@
     };
   }
 
+  /* Vehículos configurados; si la lista está vacía se conserva el vehículo único anterior. */
+  function vehiculosDisponibles() {
+    var lista = ET.config && ET.config.vehiculos ? ET.config.vehiculos() : [];
+    if (!lista.length && CONFIG.VEHICULO) {
+      lista = [{ nombre: CONFIG.VEHICULO, placas: CONFIG.PLACAS, id: '' }];
+    }
+    return lista;
+  }
+
   /* ============ INICIO ============ */
   cargarConfig();
+
+  /* Ajustes persistentes: mismos valores de acs_cfg, editados desde la pestaña Ajustes. */
+  if (ET.config) {
+    [
+      ['VEHICULOS', 'Vehículos (uno por línea: nombre|placas)', 'textarea'],
+      ['DELAY_MS', 'Espera entre operaciones (ms)', 'number'],
+      ['MOTIVO_CIERRE', 'Motivo de cierre', 'text'],
+      ['CERRAR_AL_RECEPCIONAR', 'Cerrar al recepcionar', 'check'],
+      ['VERBOSE', 'Registro detallado', 'check'],
+      ['INCLUIR_NO_CERRADAS_FACT', 'Incluir compras no cerradas (facturas)', 'check']
+    ].forEach(function (f) {
+      ET.config.add({
+        seccion: 'ACS',
+        clave: 'acs.' + f[0].toLowerCase(),
+        etiqueta: f[1],
+        tipo: f[2],
+        defecto: DEFAULTS[f[0]],
+        leer: function () { return CONFIG[f[0]]; },
+        guardar: function (v) { CONFIG[f[0]] = v; guardarConfig(); }
+      });
+    });
+  }
+
   if (typeof document !== 'undefined') {
     if (document.body) buildUI();
     else window.addEventListener('DOMContentLoaded', buildUI);
   }
 
   ET.acs = ET.acs || {};
+  ET.acs.vehiculos = vehiculosDisponibles;
 })();
 
 /* ---- src/30-acuses.js ---- */
@@ -3273,8 +3571,17 @@
       $('#sa-d1').value = isoFecha(s.lunes);
       $('#sa-d2').value = isoFecha(s.domingo);
     });
-    $('#sa-d1').addEventListener('input', () => { $('#sa-sem').value = ''; });
-    $('#sa-d2').addEventListener('input', () => { $('#sa-sem').value = ''; });
+    /* Al escribir a mano, el rango se ajusta a su semana: lunes a domingo. */
+    $('#sa-d1').addEventListener('change', () => {
+      const s = semanaDe($('#sa-d1').value);
+      if (s) $('#sa-d1').value = s.lunes;
+      $('#sa-sem').value = '';
+    });
+    $('#sa-d2').addEventListener('change', () => {
+      const s = semanaDe($('#sa-d2').value);
+      if (s) $('#sa-d2').value = s.domingo;
+      $('#sa-sem').value = '';
+    });
 
     $('#sa-an').addEventListener('click', () => { analizar().catch(e => { if (!abortado(e)) st('Error: ' + e.message); }); });
     $('#sa-zip').addEventListener('click', () => { descargarZip().catch(e => { if (!abortado(e)) st('Error: ' + e.message); }); });
@@ -4285,6 +4592,15 @@
     sendDelayMs: 800,
   };
 
+  /* La espera entre envíos se ajusta en la pestaña Ajustes y sobrevive a la recarga. */
+  const DELAY_KEY = 'traspasos_delay';
+  if (ET.store) {
+    const guardadoDelay = ET.store.get(DELAY_KEY, null);
+    if (guardadoDelay != null && isFinite(guardadoDelay)) {
+      CONFIG.sendDelayMs = Math.max(0, +guardadoDelay);
+    }
+  }
+
   const STORAGE_PREFIX = 'siretrac-traspasos:v1:';
   const MAPPING_KEY = STORAGE_PREFIX + 'mapping';
   const LEDGER_KEY = STORAGE_PREFIX + 'ledger';
@@ -4518,6 +4834,24 @@
   function todayISO() {
     const now = new Date();
     return makeISO(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  }
+
+  // Lunes de la semana que contiene la fecha (sin desplazarla a la anterior).
+  function mondayISO(iso) {
+    const p = String(iso || '').split('-');
+    if (p.length !== 3) return '';
+    const d = new Date(+p[0], +p[1] - 1, +p[2]);
+    if (Number.isNaN(d.getTime())) return '';
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return makeISO(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  }
+
+  function sundayISO(iso) {
+    const l = mondayISO(iso);
+    if (!l) return '';
+    const [y, m, day] = l.split('-').map(Number);
+    const d = new Date(y, m - 1, day + 6);
+    return makeISO(d.getFullYear(), d.getMonth() + 1, d.getDate());
   }
 
   function resolveHeaderDate(header, weekStart) {
@@ -7680,7 +8014,13 @@
     importLegacySource();
     ui.sourceScId.value = state.sourceScId;
     ui.weekStart.value = previousMondayISO();
-    ui.registrationDate.value = todayISO();
+    ui.registrationDate.value = sundayISO(ui.weekStart.value);
+    ui.weekStart.addEventListener('change', () => {
+      const lunes = mondayISO(ui.weekStart.value);
+      if (!lunes) return;
+      ui.weekStart.value = lunes;
+      ui.registrationDate.value = sundayISO(lunes);
+    });
     renderPresets('');
     bindEvents();
     renderEnvio();
@@ -7761,4 +8101,22 @@
   }
 
   ET.traspasos = ET.traspasos || {};
+  /* Única puerta a CONFIG.sendDelayMs para la pestaña Ajustes. */
+  ET.traspasos.sendDelay = function (v) {
+    if (v === undefined) return CONFIG.sendDelayMs;
+    CONFIG.sendDelayMs = Math.max(0, +v || 0);
+    if (ET.store) ET.store.set(DELAY_KEY, CONFIG.sendDelayMs);
+    return CONFIG.sendDelayMs;
+  };
+  if (ET.config) {
+    ET.config.add({
+      seccion: 'Traspasos',
+      clave: 'traspasos.espera',
+      etiqueta: 'Espera entre envíos (ms)',
+      tipo: 'number',
+      defecto: 800,
+      leer: function () { return ET.traspasos.sendDelay(); },
+      guardar: function (v) { ET.traspasos.sendDelay(v); },
+    });
+  }
 })();

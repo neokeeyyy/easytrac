@@ -1,46 +1,61 @@
 # EasyTRAC
 
-Toolkit de SIRETRAC en **un solo userscript** y un **solo sidebar**. Reúne los cinco scripts que antes vivían sueltos:
+Una barra lateral para SIRETRAC que reúne las herramientas de trabajo diario en un solo script. Cada función aparece solo en las páginas donde funciona.
 
-| Pestaña | Origen | Ancho |
+Reemplaza a cinco userscripts que vivían sueltos. Los originales quedan en `legacy/` como referencia y para regenerar los módulos con `tools/split.mjs`.
+
+## Qué incluye
+
+| Pestaña | Para qué sirve | Ancho |
 |---|---|---|
-| ACS | `ACS.user.js` | 470 px |
-| Acuses | `ACUSES.DOWNLOADER.user.js` | 300 px |
-| Venta | `AUTOFILL.SIRETRAC.VENTA.user.js` | 300 px |
-| Fecha | `FECHA.SIRETRAC.FRC.user.js` (SToolkit) | 300 px |
-| Traspasos | `siretrac-traspasos.user.js` | 780 px |
+| **ACS** | Aceptar, despachar, recepcionar y cerrar compras, y generar el formato de traspaso en PDF. | 470 px |
+| **Acuses** | Descarga de acuses en lote (ZIP con PDFs), con vista previa al pasar el ratón. | 300 px |
+| **Venta** | Autollenado de los formularios de venta, en DisPla y ES. | 300 px |
+| **Fecha** | Ajuste de fechas en SToolkit. | 300 px |
+| **Traspasos** | Carga de la matriz de traspasos de GLP desde una hoja editable. | 780 px |
+| **Ajustes** | Todas las opciones persistentes en un solo sitio, con revisión obligatoria al estrenar versión. | 420 px |
 
-Cada pestaña sólo aparece en las páginas donde su script funcionaba. Los originales quedan en `legacy/` como referencia y para volver a generar los módulos con `tools/split.mjs`.
+La barra se puede contraer a una franja delgada para no tapar la página, y recuerda la última pestaña que usaste.
 
-## Instalar
+## Instalación
 
-1. Tampermonkey (o Violentmonkey) en el navegador.
-2. Instala **`EasyTrac.user.js`**. Ese archivo sólo tiene la cabecera y 14 `@require`.
-3. El repositorio es `neokeeyyy/easytrac`; si cambia de cuenta, `OWNER` en `tools/build.mjs` es la única línea que apunta a GitHub.
+1. Instala [Tampermonkey](https://www.tampermonkey.net/) o Violentmonkey.
+2. Abre [EasyTrac.user.js](https://raw.githubusercontent.com/neokeeyyy/easytrac/main/EasyTrac.user.js) y confirma la instalación.
+3. Recarga SIRETRAC. La barra aparece en las páginas compatibles.
 
-Sin ganas de depender de la CDN, usa **`dist/EasyTrac.standalone.user.js`**: la misma cabecera con todo el código dentro.
+Las actualizaciones llegan solas: el script revisa el repositorio cada 12 h y avisa cuando hay una versión nueva.
+
+**Si tu red bloquea jsDelivr**, usa `dist/EasyTrac.standalone.user.js`. Incluye todo el código, pero no se actualiza solo: hay que reemplazarlo a mano en cada versión.
+
+## Recomendaciones
+
+- Usa siempre la versión más reciente antes de procesar datos importantes.
+- Revisa la matriz de traspasos antes de enviarla. Un pegado con formato distinto puede desplazar valores.
+- Si una pestaña no aparece, recarga la página: casi siempre es que SIRETRAC terminó de cargar después del script.
+- Al reportar un problema, indica la página exacta y lo que hiciste justo antes.
 
 ## Estructura
 
 ```
-EasyTrac.user.js        loader instalable (14 @require)
+EasyTrac.user.js        loader instalable (3 librerías + 16 módulos @require)
 src/
   01-core.js            globalThis.EasyTrac, log, ready, on
   02-store.js           get/set/del en localStorage (sustituye GM_*)
   03-http.js            apiPost, getJsonDatos, reintentos, multipart
-  04-dates.js           pad2, toISO, parseDia, parseISO, isoToDMA
+  04-dates.js           pad2, toISO, semanas de lunes a domingo
   05-text.js            limpiarHtml, pick, matchInput, matchText
-  06-permisos.js        escaneo de permisos y URLs
+  06-permisos.js        escaneo único de permisos y URLs
   10-ui-tokens.js       tokens.css del house style, inlineado
   11-ui-sidebar.js      sidebar único (superpuesto / riel de 44 px)
   13-ui-grid.js         hoja de cálculo para pegar matrices
+  14-ui-config.js       Ajustes únicos y revisión al arrancar
   20-acs.js             ACS completo
   30-acuses.js          descarga de acuses
   40-venta.js           auto-fill de venta (DisPla y ES)
   50-fecha.js           SToolkit
   70-traspasos.js       traspasos GLP
-test/                   bun test (47 pruebas)
-tools/                  split, build, syntax, tokens
+test/                   bun test (98 pruebas)
+tools/                  split, build, syntax, tokens, preview, release
 dist/                   bundle y standalone generados
 legacy/                 los 5 userscripts originales
 ```
@@ -50,10 +65,11 @@ Los números son el orden de `@require`; no los renombres sin actualizar `tools/
 ## Comandos
 
 ```powershell
-bun install       # una vez: jsdom, solo para las pruebas
-bun test          # 47 pruebas
+bun install             # una vez: jsdom, solo para las pruebas
+bun test                # 98 pruebas
 bun tools/syntax.mjs
-bun tools/build.mjs   # regenera EasyTrac.user.js, dist/easytrac.bundle.js y el standalone
+bun tools/build.mjs     # regenera EasyTrac.user.js, dist/easytrac.bundle.js y el standalone
+bun tools/preview.mjs   # página local tipo SIRETRAC para revisar la interfaz sin datos reales
 ```
 
 ## Actualizaciones
@@ -77,20 +93,8 @@ por eso el tag viaja junto al push.
 Si jsDelivr responde 404 en un módulo recién publicado, es una caché negativa del borde:
 `https://purge.jsdelivr.net/gh/neokeeyyy/easytrac@vX.Y.Z/src/archivo.js` la limpia.
 
-Instalación:
-
-- **Recomendado**: instala `https://raw.githubusercontent.com/neokeeyyy/easytrac/main/EasyTrac.user.js`
-  (Tampermonkey lo actualiza solo; los módulos vienen de jsDelivr).
-- **Sin CDN**: instala `dist/EasyTrac.standalone.user.js` del repo; lleva todo dentro.
-
-Para clonar y trabajar:
-
-```powershell
-git clone https://github.com/neokeeyyy/easytrac.git
-cd easytrac
-bun install
-```
-
+Los archivos de una rama en `raw.githubusercontent.com` también tardan unos minutos en
+refrescar tras el push; el commit y el tag sí están al instante.
 
 ## Decisiones
 
@@ -98,9 +102,16 @@ bun install
 - **Un scope**: los `@require` comparten alcance, así que cada módulo es una IIFE y publica en `EasyTrac.<área>`; los nombres locales pueden repetirse sin colisión.
 - **Sidebar**: expandido se superpone a la página; colapsado es un riel de 44 px que sí desplaza el contenido. Conserva `localStorage.shub_tab` y `shub_min`.
 - **Matriz de traspasos**: se pega en una hoja de cálculo real (`13-ui-grid.js`), se edita celda por celda y se serializa a TSV antes de `parseMatrix`; el parser no cambió.
-- **Sin fusiones de riesgo**: los escáneres de permisos de Acuses y Traspasos se movieron tal cual; fusionarlos queda pendiente y necesita fixture. `toISO` y `toISOUTC` siguen separados porque su semántica difiere.
+- **Un escáner de permisos**: `06-permisos.js` lee la tabla de SIRETRAC una vez y lo usan Acuses y Traspasos; ACS conserva el suyo por regex porque trabaja sobre HTML crudo.
+- **Sin datos de empresa en el código**: ni vehículos, ni placas, ni fechas, ni listas de estados. Todo se configura en Ajustes y se guarda en el navegador.
 
-## Pendiente
+## Próximamente
 
-- Fusionar los dos escáneres de permisos con pruebas sobre HTML real.
-- Pruebas de ACS (filtros por estatus y cuerpos de petición).
+- Verificación del nombre de campo del vehículo en `GuardaCompraGasLP` contra la API real.
+- Mensajes de error que indiquen qué paso falló.
+
+## Versiones
+
+Consulta el [historial de versiones](https://github.com/neokeeyyy/easytrac/tags) para ver qué cambió en cada release.
+
+Para contribuir o entender la estructura interna, revisa [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -12,6 +12,15 @@
     sendDelayMs: 800,
   };
 
+  /* La espera entre envíos se ajusta en la pestaña Ajustes y sobrevive a la recarga. */
+  const DELAY_KEY = 'traspasos_delay';
+  if (ET.store) {
+    const guardadoDelay = ET.store.get(DELAY_KEY, null);
+    if (guardadoDelay != null && isFinite(guardadoDelay)) {
+      CONFIG.sendDelayMs = Math.max(0, +guardadoDelay);
+    }
+  }
+
   const STORAGE_PREFIX = 'siretrac-traspasos:v1:';
   const MAPPING_KEY = STORAGE_PREFIX + 'mapping';
   const LEDGER_KEY = STORAGE_PREFIX + 'ledger';
@@ -3512,4 +3521,22 @@
   }
 
   ET.traspasos = ET.traspasos || {};
+  /* Única puerta a CONFIG.sendDelayMs para la pestaña Ajustes. */
+  ET.traspasos.sendDelay = function (v) {
+    if (v === undefined) return CONFIG.sendDelayMs;
+    CONFIG.sendDelayMs = Math.max(0, +v || 0);
+    if (ET.store) ET.store.set(DELAY_KEY, CONFIG.sendDelayMs);
+    return CONFIG.sendDelayMs;
+  };
+  if (ET.config) {
+    ET.config.add({
+      seccion: 'Traspasos',
+      clave: 'traspasos.espera',
+      etiqueta: 'Espera entre envíos (ms)',
+      tipo: 'number',
+      defecto: 800,
+      leer: function () { return ET.traspasos.sendDelay(); },
+      guardar: function (v) { ET.traspasos.sendDelay(v); },
+    });
+  }
 })();

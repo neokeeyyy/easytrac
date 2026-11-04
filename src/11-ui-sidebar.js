@@ -146,6 +146,7 @@
 
   ET.ui = ET.ui || {};
   ET.ui.tab = tab;
+  ET.ui.activar = activar;
   ET.ui.root = function () { return root; };
   ET.ui.style = function (css) {
     style();

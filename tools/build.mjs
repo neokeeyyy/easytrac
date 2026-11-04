@@ -21,6 +21,7 @@ const MODULES = [
   '11-ui-sidebar.js',
   '12-ui-notice.js',
   '13-ui-grid.js',
+  '14-ui-config.js',
   '20-acs.js',
   '30-acuses.js',
   '40-venta.js',

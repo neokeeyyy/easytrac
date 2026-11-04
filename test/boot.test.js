@@ -5,7 +5,7 @@ import { JSDOM } from 'jsdom';
 
 const MODULES = [
   '01-core.js', '02-store.js', '03-http.js', '04-dates.js', '05-text.js', '06-permisos.js',
-  '10-ui-tokens.js', '11-ui-sidebar.js', '12-ui-notice.js', '13-ui-grid.js', '20-acs.js', '30-acuses.js',
+  '10-ui-tokens.js', '11-ui-sidebar.js', '12-ui-notice.js', '13-ui-grid.js', '14-ui-config.js', '20-acs.js', '30-acuses.js',
   '40-venta.js', '50-fecha.js', '70-traspasos.js',
 ];
 
@@ -14,12 +14,13 @@ const BUNDLE = MODULES.map((m) => readFileSync(new URL('../src/' + m, import.met
   .join('\n;\n')
   .replace("ET.version = '0.0.0-dev';", "ET.version = '" + VERSION + "';");
 
-async function boot(url, body, code) {
+async function boot(url, body, code, antes) {
   const dom = new JSDOM('<!doctype html><html><head></head><body>' + (body || '') + '</body></html>', {
     url,
     runScripts: 'outside-only',
     pretendToBeVisual: true,
   });
+  if (antes) antes(dom.window);
   dom.window.eval(code || BUNDLE);
   /* jsdom fires DOMContentLoaded/load asynchronously; the modules boot there. */
   if (dom.window.document.readyState !== 'complete') {
@@ -48,12 +49,62 @@ test('ACS arranca sin vehiculo, placas ni fechas de otra empresa', async () => {
   const hasta = doc.querySelector('#acs-hasta').value;
   const desde = doc.querySelector('#acs-desde').value;
 
-  expect(doc.querySelector('#acs-vehiculo').value).toBe('');
-  expect(doc.querySelector('#acs-placas').value).toBe('');
+  expect(doc.querySelector('#cfg-acs-vehiculos').value).toBe('');
   // Por defecto, la semana pasada completa: lunes a domingo.
   expect(new Date(desde + 'T00:00:00').getDay()).toBe(1);
   expect(new Date(hasta + 'T00:00:00').getDay()).toBe(0);
   expect(Math.round((new Date(hasta) - new Date(desde)) / 86400000)).toBe(6);
+});
+
+test('el panel Ajustes reúne las opciones persistentes', async () => {
+  const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
+  const doc = win.document;
+  expect(tabs(win)).toContain('ajustes');
+  const pane = doc.querySelector('.shub-pane[data-id="ajustes"]');
+  expect(pane).toBeTruthy();
+  expect(pane.querySelector('#cfg-acs-vehiculos')).toBeTruthy();
+  expect(pane.querySelector('#cfg-acs-delay-ms')).toBeTruthy();
+  expect(pane.querySelector('#cfg-acs-cerrar-al-recepcionar')).toBeTruthy();
+  expect(pane.querySelector('#cfg-acs-incluir-no-cerradas-fact')).toBeTruthy();
+  expect(pane.querySelector('#cfg-traspasos-espera')).toBeTruthy();
+  /* ACS ya no lleva su propio cajón de ajustes. */
+  expect(doc.querySelector('#acs-cfg')).toBeFalsy();
+  expect(doc.querySelector('#acs-cfg-toggle')).toBeFalsy();
+});
+
+test('el modal de revisión no deja usar el toolkit hasta guardar', async () => {
+  const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
+  const doc = win.document;
+  const modal = doc.querySelector('#etcfg-modal');
+  expect(modal).toBeTruthy();
+  const guardar = modal.querySelector('#etcfg-ok');
+  expect(guardar.disabled).toBe(true);
+
+  /* Esc y clic fuera no lo cierran. */
+  modal.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  expect(doc.querySelector('#etcfg-modal')).toBeTruthy();
+
+  /* Sin abrir Ajustes, «Guardar y continuar» no hace nada. */
+  guardar.click();
+  expect(doc.querySelector('#etcfg-modal')).toBeTruthy();
+  expect(win.EasyTrac.store.get('cfg_visto', '')).toBe('');
+
+  modal.querySelector('#etcfg-ir').click();
+  const pane = doc.querySelector('.shub-pane[data-id="ajustes"]');
+  expect(pane.classList.contains('on')).toBe(true);
+  expect(guardar.disabled).toBe(false);
+
+  guardar.click();
+  expect(doc.querySelector('#etcfg-modal')).toBeFalsy();
+  expect(win.EasyTrac.store.get('cfg_visto', '')).toBe(VERSION);
+});
+
+test('sin cambio de versión el modal no aparece', async () => {
+  const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros', '', undefined, (w) => {
+    w.localStorage.setItem('easytrac:cfg_visto', JSON.stringify(VERSION));
+  });
+  expect(win.document.querySelector('#etcfg-modal')).toBeFalsy();
 });
 
 test('acuses stays out of pages it cannot work on', async () => {
@@ -117,8 +168,8 @@ test('el standalone instalable arranca igual que los módulos', async () => {
 test('el loader apunta a un módulo por archivo y no pide grants', () => {
   const head = readFileSync(new URL('../EasyTrac.user.js', import.meta.url), 'utf8');
   const requires = head.split('\n').filter((l) => l.startsWith('// @require'));
-  expect(requires.length).toBe(18); /* 3 librerías + 15 módulos */
-  expect(requires.filter((l) => l.includes('/src/')).length).toBe(15);
+  expect(requires.length).toBe(19); /* 3 librerías + 16 módulos */
+  expect(requires.filter((l) => l.includes('/src/')).length).toBe(16);
   expect(head).toContain('// @grant        none');
   expect(head).toContain('@match        https://siretrac.cne.gob.mx/*');
   /* Sin esto la copia modular reporta 0.0.0-dev y el aviso de versión miente. */

@@ -19,8 +19,9 @@
   var DEFAULTS = {
     DESDE: '',                  // rango de fechaCompra (Aceptar/Despachar) y fechaDespacho (Recepcionar)
     HASTA: '',                  // vacío = últimos 7 días, ver cargarConfig
-    VEHICULO: '',               // lo llena cada empresa en Ajustes (Despachar)
-    PLACAS: '',                 // idem
+    VEHICULO: '',               // compatibilidad: vehículo único de versiones anteriores
+    PLACAS: '',                 // compatibilidad: placas del vehículo único
+    VEHICULOS: '',              // lista: una línea por vehículo, `nombre|placas` o `placas`
     DELAY_MS: 800,              // espera entre operaciones
     DATA_RETRIES: 3,            // reintentos solo para consultas
     DATA_RETRY_BASE_MS: 100,    // backoff inicial de consultas
@@ -1097,15 +1098,6 @@
       '  <label for="acs-hasta">Hasta</label><input type="date" id="acs-hasta" value="' + CONFIG.HASTA + '" title="Fecha de compra; en Recepcionar es la fecha de despacho">' +
       '  <label for="acs-permiso">Permiso</label><select id="acs-permiso" title="Permiso vendedor; Todos = sin filtro"><option value="">Todos los permisos</option></select>' +
       '  <label class="acs-opt" title="Recorre cada permiso de la sesión en lugar de solo el actual"><input type="checkbox" id="acs-permisos" ' + (CONFIG.RECORRER_PERMISOS ? 'checked' : '') + '> Recorrer permisos</label>' +
-      '  <button type="button" id="acs-cfg-toggle" title="Mostrar u ocultar ajustes"><i class="fa-solid fa-gear"></i> Ajustes</button>' +
-      '</div>' +
-      '<div id="acs-cfg">' +
-      '  <label for="acs-vehiculo">Vehículo</label><input type="text" id="acs-vehiculo" value="' + CONFIG.VEHICULO + '">' +
-      '  <label for="acs-placas">Placas</label><input type="text" id="acs-placas" value="' + CONFIG.PLACAS + '">' +
-      '  <label for="acs-delay">Espera (ms)</label><input type="number" id="acs-delay" value="' + CONFIG.DELAY_MS + '" min="0" step="100" title="Pausa entre operaciones">' +
-      '  <label for="acs-motivo">Motivo cierre</label><input type="text" id="acs-motivo" value="' + (CONFIG.MOTIVO_CIERRE || '') + '" placeholder="Mínimo 5 caracteres">' +
-      '  <label class="acs-opt"><input type="checkbox" id="acs-cerrar" ' + (CONFIG.CERRAR_AL_RECEPCIONAR ? 'checked' : '') + '> Cerrar al recepcionar</label>' +
-      '  <label class="acs-opt"><input type="checkbox" id="acs-verbose" ' + (CONFIG.VERBOSE ? 'checked' : '') + '> Registro detallado</label>' +
       '</div>' +
       '<ul id="acs-tabs" role="tablist">' +
       '  <li data-tab="inicio" class="on" role="tab" aria-selected="true">Inicio</li>' +
@@ -1121,7 +1113,7 @@
       '  <div class="acs-pane" id="acs-pane-despachar" style="display:none">Despacha compras <b>Aceptadas</b> con el vehículo y placas configurados.</div>' +
       '  <div class="acs-pane" id="acs-pane-recepcionar" style="display:none">Recepciona entregas <b>En tránsito</b>. Si está activo, cierra la compra al recepcionar.</div>' +
       '  <div class="acs-pane" id="acs-pane-cerrar" style="display:none">Lista compras <b>Aceptadas</b> sin cerrar. Selecciona y usa <b>Cerrar seleccionadas</b>.</div>' +
-      '  <div class="acs-pane" id="acs-pane-facturas" style="display:none"><div>Sube formatos de traspaso de compras cerradas sin factura y descarga los formatos PDF de las compras cerradas dentro del rango.</div><label class="acs-opt"><input type="checkbox" id="acs-incluir-nocerradas" ' + (CONFIG.INCLUIR_NO_CERRADAS_FACT ? 'checked' : '') + '> Incluir compras no cerradas</label></div>' +
+      '  <div class="acs-pane" id="acs-pane-facturas" style="display:none"><div>Sube formatos de traspaso de compras cerradas sin factura y descarga los formatos PDF de las compras cerradas dentro del rango.</div></div>' +
       '  <div id="acs-facturas-acciones" style="display:none">' +
       '    <button id="acs-refrescar-facturas" class="acs-btn"><i class="fa-solid fa-rotate"></i> Actualizar</button>' +
       '    <button id="acs-subir-facturas" class="acs-btn"><i class="fa-solid fa-cloud-arrow-up"></i> Subir</button>' +
@@ -1214,10 +1206,6 @@
     panel.querySelector('#acs-descargar-formatos').addEventListener('click', function () {
       descargarFormatosRango();
     });
-    panel.querySelector('#acs-incluir-nocerradas').addEventListener('change', function () {
-      CONFIG.INCLUIR_NO_CERRADAS_FACT = this.checked;
-      guardarConfig();
-    });
     panel.querySelector('#acs-detener-facturas').addEventListener('click', detener);
     panel.querySelector('#acs-tabla tbody').addEventListener('change', actualizarResumen);
     panel.querySelector('#acs-cerrar-sel').addEventListener('click', function () {
@@ -1244,23 +1232,16 @@
       setTab(tabActiva, false);
     }
 
-    panel.querySelector('#acs-cfg-toggle').addEventListener('click', function () {
-      var cfg = panel.querySelector('#acs-cfg');
-      cfg.classList.toggle('acs-open');
-    });
-
-    panel.querySelector('#acs-cerrar').addEventListener('change', function () { CONFIG.CERRAR_AL_RECEPCIONAR = this.checked; guardarConfig(); });
-    panel.querySelector('#acs-verbose').addEventListener('change', function () { CONFIG.VERBOSE = this.checked; guardarConfig(); });
     panel.querySelector('#acs-permisos').addEventListener('change', function () { CONFIG.RECORRER_PERMISOS = this.checked; guardarConfig(); });
     panel.querySelector('#acs-permiso').addEventListener('change', function () { CONFIG.PERMISO_FILTRO = this.value; guardarConfig(); });
 
-    var CAMPOS = { 'acs-desde': 'DESDE', 'acs-hasta': 'HASTA', 'acs-vehiculo': 'VEHICULO', 'acs-placas': 'PLACAS', 'acs-motivo': 'MOTIVO_CIERRE', 'acs-delay': 'DELAY_MS' };
+    var CAMPOS = { 'acs-desde': 'DESDE', 'acs-hasta': 'HASTA' };
     Object.keys(CAMPOS).forEach(function (id) {
       panel.querySelector('#' + id).addEventListener('change', function () {
         /* Desde siempre lunes, hasta siempre domingo: se ajusta a la semana elegida. */
         if (id === 'acs-desde' && this.value) this.value = semanaDe(this.value).lunes;
         if (id === 'acs-hasta' && this.value) this.value = semanaDe(this.value).domingo;
-        CONFIG[CAMPOS[id]] = id === 'acs-delay' ? (+this.value || 0) : this.value;
+        CONFIG[CAMPOS[id]] = this.value;
         guardarConfig();
       });
     });
@@ -1284,16 +1265,7 @@
     '#acs-topbar label{font-size:13px;color:var(--ui-muted);margin:0;font-weight: 400;}' +
     '#acs-topbar input[type=date],#acs-topbar select{border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;padding:4px 6px;max-width:180px;cursor:pointer;}' +
     '#acs-topbar .acs-opt{margin-left:8px;}' +
-    '#acs-cfg-toggle{cursor:pointer;font:inherit;font-size:13px;margin-left:auto;color:var(--ui-fg);border:1px solid var(--ui-border-input);border-radius:0;background:#f5f5f5;padding:4px 8px;}' +
-    '#acs-cfg-toggle:hover{background:#e9e9e9;}' +
-    '#acs-cfg-toggle:focus-visible{outline:2px solid var(--ui-focus);outline-offset:1px;}' +
-    '#acs-cfg{display:none;grid-template-columns:max-content minmax(0,1fr) max-content minmax(0,1fr);gap:8px 10px;align-items:center;padding:10px 12px;background:#f5f5f5;border-bottom:1px solid var(--ui-border);}' +
-    '#acs-cfg.acs-open{display:grid;}' +
-    '#acs-cfg .acs-opt{grid-column:span 2;display:flex;align-items:center;gap:6px;white-space:nowrap;}' +
-    '#acs-cfg label{color:var(--ui-fg);font-size:13px;margin:0;font-weight: 400;}' +
-    '#acs-cfg input,#acs-cfg select{border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:12px;padding:5px 6px;min-width:0;width:100%;}' +
-    '#acs-cfg input[type="checkbox"]{width:16px;height:16px;flex:0 0 auto;margin:0;accent-color:var(--ui-primary);}' +
-    '#acs-topbar input:focus,#acs-topbar select:focus,#acs-cfg input:focus,#acs-cfg select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
+    '#acs-topbar input:focus,#acs-topbar select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
     '.acs-opt{color:var(--ui-fg);display:flex;align-items:center;gap:6px;font-size:13px;}' +
     '.acs-opt input{width:14px;height:14px;margin:0;cursor:pointer;}' +
     '.acs-pane{padding:10px 12px;font-size:13px;color:var(--ui-muted);background:var(--ui-bg);border-bottom:1px solid var(--ui-border);}' +
@@ -1342,12 +1314,45 @@
     };
   }
 
+  /* Vehículos configurados; si la lista está vacía se conserva el vehículo único anterior. */
+  function vehiculosDisponibles() {
+    var lista = ET.config && ET.config.vehiculos ? ET.config.vehiculos() : [];
+    if (!lista.length && CONFIG.VEHICULO) {
+      lista = [{ nombre: CONFIG.VEHICULO, placas: CONFIG.PLACAS, id: '' }];
+    }
+    return lista;
+  }
+
   /* ============ INICIO ============ */
   cargarConfig();
+
+  /* Ajustes persistentes: mismos valores de acs_cfg, editados desde la pestaña Ajustes. */
+  if (ET.config) {
+    [
+      ['VEHICULOS', 'Vehículos (uno por línea: nombre|placas)', 'textarea'],
+      ['DELAY_MS', 'Espera entre operaciones (ms)', 'number'],
+      ['MOTIVO_CIERRE', 'Motivo de cierre', 'text'],
+      ['CERRAR_AL_RECEPCIONAR', 'Cerrar al recepcionar', 'check'],
+      ['VERBOSE', 'Registro detallado', 'check'],
+      ['INCLUIR_NO_CERRADAS_FACT', 'Incluir compras no cerradas (facturas)', 'check']
+    ].forEach(function (f) {
+      ET.config.add({
+        seccion: 'ACS',
+        clave: 'acs.' + f[0].toLowerCase(),
+        etiqueta: f[1],
+        tipo: f[2],
+        defecto: DEFAULTS[f[0]],
+        leer: function () { return CONFIG[f[0]]; },
+        guardar: function (v) { CONFIG[f[0]] = v; guardarConfig(); }
+      });
+    });
+  }
+
   if (typeof document !== 'undefined') {
     if (document.body) buildUI();
     else window.addEventListener('DOMContentLoaded', buildUI);
   }
 
   ET.acs = ET.acs || {};
+  ET.acs.vehiculos = vehiculosDisponibles;
 })();
