@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.20'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.21'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -7586,8 +7586,6 @@
       },
       'preset-save': savePreset,
       'preset-delete': deletePreset,
-      'stations-from-matrix': stationsFromMatrix,
-      suggest: suggestDestinations,
       analyze: analyzeMatrix,
       clear: limpiarTodo,
       generate: generateTransfers,
@@ -7837,13 +7835,9 @@
             </details>
           </div>
           <div class="st-card">
-            <label class="st-field">Estaciones (una por línea)
-              <textarea data-role="stations" rows="5" placeholder="Una estación por línea"></textarea>
+            <label class="st-field">Estaciones detectadas
+              <textarea data-role="stations" rows="3" readonly></textarea>
             </label>
-            <div class="st-actions">
-              <button type="button" data-action="stations-from-matrix">Cargar de la matriz</button>
-              <button type="button" data-action="suggest">Sugerir destinos</button>
-            </div>
             <div class="st-wire" data-role="mapping-board"></div>
             <p class="st-note">El mapeo se edita en Ajustes (engrane, arriba a la derecha).</p>
           </div>
