@@ -937,7 +937,6 @@
       }
       renderGlobalSource();
       autoSelectSource();
-      syncStationsFromTextarea();
       ui.permitsStatus.textContent =
         permits.length + ' permiso(s) cargados.' + (migrationWarning ? ' ' + migrationWarning : '');
     } catch (error) {
@@ -975,36 +974,6 @@
     return plants[0];
   }
 
-  function autoMapStations(stationNames) {
-    if (!state.permits.length) return 0;
-    autoSelectSource();
-    const wanted = new Set(
-      (stationNames || []).map(function (name) {
-        return normalizeText(name);
-      })
-    );
-    const entries = Object.values(state.mapping)
-      .filter(function (entry) {
-        return !wanted.size || wanted.has(normalizeText(entry.name));
-      })
-      .map(function (entry) {
-        const permit = resolvePermit(entry.permiso, state.permits);
-        return { entry: entry, destinationId: permit ? String(permit.id) : '' };
-      });
-    const count = assignByOrder(entries, state.permits, state.globalSourceId);
-    for (const item of entries) {
-      if (!item.destinationId) continue;
-      const permit = findPermitById(item.destinationId);
-      if (permit) item.entry.permiso = canonicalPermit(permit.permit);
-    }
-    if (count) {
-      state.autoMapped = true;
-      saveMapping();
-      renderStations();
-    }
-    return count;
-  }
-
   function uniqueStations(parsed) {
     const seen = new Set();
     const names = [];
@@ -1016,36 +985,6 @@
       names.push(name);
     }
     return names;
-  }
-
-  function syncStationsFromTextarea() {
-    if (!ui) return;
-    const names = ui.stations.value
-      .split(/\r?\n/)
-      .map(function (name) {
-        return name.trim();
-      })
-      .filter(Boolean);
-    /* Se suman a la lista de Ajustes; las filas que no están en el texto se conservan
-       y se editan o eliminan desde la lista. */
-    const next = Object.assign({}, state.mapping);
-
-    for (const name of names) {
-      const key = normalizeText(name);
-      if (!key || next[key]) continue;
-      const suggestion = suggestPermit(name, state.permits);
-      next[key] = {
-        name: name,
-        permiso: suggestion ? canonicalPermit(suggestion.permit) : '',
-        origen: '',
-      };
-    }
-
-    state.mapping = next;
-    saveMapping();
-    invalidateTransfers('Estaciones actualizadas; vuelve a generar los traspasos.');
-    renderStations();
-    refreshPreview();
   }
 
   let wireView = null;
@@ -1242,16 +1181,6 @@
     return mapping;
   }
 
-  function listFromMapping() {
-    return Object.values(state.mapping).map(function (entry) {
-      return {
-        nombre: entry.name,
-        permiso: entry.permiso || '',
-        origen: entry.origen || '',
-      };
-    });
-  }
-
   /* Convierte el mapeo viejo (ids internos) a la lista universal (códigos LP). */
   function migrateMapping(saved, permits) {
     const byId = new Map(
@@ -1335,7 +1264,6 @@
 
   function saveMapping() {
     if (!ui) return;
-    savePlantillas(listFromMapping());
     const payload = {
       version: 1,
       stationsText: ui.stations.value,
@@ -1553,29 +1481,8 @@
     state.parsed = parsed;
 
     const stations = uniqueStations(parsed);
-    if (stations.length) {
-      const current = ui.stations.value
-        .split(/\r?\n/)
-        .map(function (name) {
-          return name.trim();
-        })
-        .filter(Boolean);
-      const missing = stations.filter(function (name) {
-        return !current.some(function (item) {
-          return normalizeText(item) === normalizeText(name);
-        });
-      });
-      if (missing.length) {
-        ui.stations.value = current.concat(missing).join('\n');
-        syncStationsFromTextarea();
-      }
-    }
-
-    const mapped = autoMapStations(stations);
-    if (mapped) {
-      ui.permitsStatus.textContent =
-        mapped + ' estación(es) asignadas por orden. Revisa el mapeo antes de enviar.';
-    }
+    /* Solo se muestran: el mapeo estación→permiso se edita en Ajustes, no aquí. */
+    ui.stations.value = stations.join('\n');
 
     refreshPreview();
     renderMatrixStatus();
@@ -2515,49 +2422,6 @@
     updateConfigWarning();
   }
 
-  function stationsFromMatrix() {
-    if (!ui) return;
-    const text = matrixText().trim();
-    if (!text) {
-      ui.permitsStatus.textContent = 'Pega primero una matriz en la pestaña Matriz.';
-      return;
-    }
-    if (!ui.weekStart.value) ui.weekStart.value = previousMondayISO();
-    const parsed = parseMatrix(text, { weekStart: ui.weekStart.value });
-    const names = uniqueStations(parsed);
-    if (!names.length) {
-      ui.permitsStatus.textContent = 'La matriz no tiene estaciones reconocibles.';
-      return;
-    }
-    ui.stations.value = names.join('\n');
-    syncStationsFromTextarea();
-    ui.permitsStatus.textContent = names.length + ' estación(es) cargadas desde la matriz.';
-  }
-
-  function suggestDestinations() {
-    if (!ui) return;
-    if (!state.permits.length) {
-      ui.permitsStatus.textContent = 'Carga los permisos primero.';
-      return;
-    }
-    let count = 0;
-    for (const entry of Object.values(state.mapping)) {
-      if (entry.permiso) continue;
-      const suggestion = suggestPermit(entry.name, state.permits);
-      if (suggestion) {
-        entry.permiso = canonicalPermit(suggestion.permit);
-        count += 1;
-      }
-    }
-    saveMapping();
-    invalidateTransfers('Destinos actualizados; vuelve a generar los traspasos.');
-    renderStations();
-    refreshPreview();
-    ui.permitsStatus.textContent = count
-      ? count + ' destino(s) sugeridos. Revisa y ajusta antes de generar.'
-      : 'No hubo coincidencias para sugerir destinos.';
-  }
-
   function bindEvents() {
     ui.fab.addEventListener('click', openPanel);
     ui.close.addEventListener('click', closePanel);
@@ -2578,7 +2442,6 @@
     ui.preset.addEventListener('change', function () {
       if (ui.preset.value) applyPreset(ui.preset.value);
     });
-    ui.stations.addEventListener('change', syncStationsFromTextarea);
     ui.summary.addEventListener('change', function (event) {
       const select = event.target.closest('[data-role="transfer-vehicle"]');
       if (!select) return;
