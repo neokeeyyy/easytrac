@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.9
+// @version      1.0.10
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -6401,6 +6401,7 @@
       'stations-from-matrix': stationsFromMatrix,
       suggest: suggestDestinations,
       analyze: analyzeMatrix,
+      clear: limpiarTodo,
       generate: generateTransfers,
       simulate: simulate,
       send: sendAll,
@@ -6408,6 +6409,23 @@
     };
     const handler = actions[action.dataset.action];
     if (handler) handler();
+  }
+
+  /* Clears what was pasted and every derived output, keeping permits, mapping and dates. */
+  function limpiarTodo() {
+    if (!ui || state.busy) return;
+    state.parsed = null;
+    state.preview = [];
+    state.transfers = [];
+    state.autoMapped = false;
+    ui.matrix.innerHTML = '';
+    ui.preview.textContent = '';
+    ui.output.textContent = '';
+    ui.sendStatus.textContent = '';
+    ui.matrixStatus.textContent = '';
+    switchTab('pega');
+    renderEnvio();
+    updateConfigWarning();
   }
 
   function stationsFromMatrix() {
@@ -6562,6 +6580,7 @@
           </label>
           <div class="st-actions">
             <button type="button" class="st-primary st-big" data-action="analyze">Analizar matriz</button>
+            <button type="button" data-action="clear">Limpiar</button>
             <span class="st-note">No se envía nada al analizar.</span>
           </div>
         </section>
@@ -6594,6 +6613,7 @@
             <button type="button" data-action="simulate">Simular</button>
             <button type="button" class="st-danger st-big" data-action="send">Enviar a SIRETRAC</button>
             <button type="button" data-action="export">Exportar CSV</button>
+            <button type="button" data-action="clear">Limpiar</button>
           </div>
           <div class="st-log" data-role="send-status"></div>
           <div class="st-output" data-role="output"></div>
