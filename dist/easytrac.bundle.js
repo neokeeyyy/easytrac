@@ -273,6 +273,48 @@
     return lista;
   }
 
+  // Forma canónica: { id, nombre, href, razon, materia, actividad }; nombre = texto del permiso, href = enlace SeleccionarPermiso.
+  function permisosDeDocumento(doc) {
+    var tabla = doc.querySelector('#example');
+    if (!tabla) return [];
+    var norm = function (t) {
+      return String(t == null ? '' : t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    };
+    var cab = [].map.call(tabla.querySelectorAll('thead th'), function (x) { return norm(x.textContent || ''); });
+    if (cab.length && (!cab.some(function (h) { return h.indexOf('permiso') !== -1; }) ||
+      !cab.some(function (h) { return h.indexOf('razon social') !== -1; }))) return [];
+    var lista = [], vistos = Object.create(null);
+    var filas = tabla.querySelectorAll('tbody tr');
+    for (var i = 0; i < filas.length; i++) {
+      var tr = filas[i], tds = tr.cells || [];
+      if (tds.length < 2) continue;
+      var nombre = String(tds[1].textContent || '').trim();
+      if (!nombre) continue;
+      var a = tr.querySelector('a[href*="idPermiso="]');
+      var href = a ? (a.getAttribute('href') || '') : '';
+      var id = '';
+      if (href) {
+        try { id = new URL(href, 'https://siretrac.cne.gob.mx/').searchParams.get('idPermiso') || ''; }
+        catch (e) { id = ''; }
+      }
+      if (!id) {
+        var raw = String(tds[0] ? tds[0].textContent : '').trim();
+        if (/^\d+$/.test(raw) && raw !== '0') id = raw;
+      }
+      if (!id || vistos[id]) continue;
+      vistos[id] = true;
+      lista.push({
+        id: id,
+        nombre: nombre,
+        href: href,
+        razon: String(tds[2] ? tds[2].textContent : '').trim(),
+        materia: String(tds[3] ? tds[3].textContent : '').trim(),
+        actividad: String(tds[4] ? tds[4].textContent : '').trim()
+      });
+    }
+    return lista;
+  }
+
   function permisoUrlPorId(id) {
     return '/OrdenDePedido/SeleccionarPermiso?idPermiso=' + encodeURIComponent(id) +
       '&permiso=&idPermisionario=0&idPermisoMateria=0&idPermisoActividad=0&razonSocial=&estatus=False&capacidadOperativa=0';
@@ -291,6 +333,7 @@
   ET.core = ET.core || {};
   ET.core.permisos = {
     escanearPermisos: escanearPermisos,
+    permisosDeDocumento: permisosDeDocumento,
     permisoUrlPorId: permisoUrlPorId,
     permisoDeUrl: permisoDeUrl
   };
@@ -716,13 +759,30 @@
 
 
 
-  function enRango(fechaDMA) {
-    try { var fc = parseDia(fechaDMA); return fc >= parseISO(CONFIG.DESDE) && fc <= parseISO(CONFIG.HASTA); }
+  function enRango(fechaDMA, cfg) {
+    cfg = cfg || CONFIG;
+    try { var fc = parseDia(fechaDMA); return fc >= parseISO(cfg.DESDE) && fc <= parseISO(cfg.HASTA); }
     catch (e) { return false; }
   }
-  function pasaFiltroPermiso(compra) {
-    if (CONFIG.PERMISO_FILTRO && String(compra && compra.permiso_Vendedor || '').trim() !== String(CONFIG.PERMISO_FILTRO).trim()) return false;
+  function pasaFiltroPermiso(compra, cfg) {
+    cfg = cfg || CONFIG;
+    if (cfg.PERMISO_FILTRO && String(compra && compra.permiso_Vendedor || '').trim() !== String(cfg.PERMISO_FILTRO).trim()) return false;
     return true;
+  }
+  /* ¿Entra la compra en la lista `tipo`? Estatus + fecha (y permiso vendedor si hay filtro). */
+  function esCompraVisible(compra, tipo, cfg) {
+    cfg = cfg || CONFIG;
+    if (!compra || !pasaFiltroPermiso(compra, cfg)) return false;
+    var estatus = Number(compra.idEstatus);
+    var rechazada = compra.estatus === 'Rechazada';
+    if (tipo === 'solicitadas') return estatus === 0 && enRango(compra.fechaCompra, cfg);
+    if (tipo === 'aceptadas') return estatus === 1 && enRango(compra.fechaCompra, cfg);
+    if (tipo === 'enTransito') return estatus === 4 && enRango(compra.fechaDespacho, cfg);
+    if (tipo === 'cerrables') return (estatus === 1 || compra.estatus === 'Aceptada') && !compra.fechaCierre && enRango(compra.fechaCompra, cfg);
+    if (tipo === 'listado') return compra.idEstatus !== 4 && !rechazada && enRango(compra.fechaCompra, cfg);
+    if (tipo === 'facturas') return !rechazada && enRango(compra.fechaCompra, cfg) &&
+      (cfg.INCLUIR_NO_CERRADAS_FACT || estatus === 2 || String(compra.fechaCierre || '').trim() !== '');
+    return false;
   }
   function actualizarFiltroPermisos(data) {
     var select = document.querySelector('#acs-permiso');
@@ -971,13 +1031,15 @@
           throw new Error('requiere motivo de cierre (>=5 caracteres) en configuración');
         }
         var volCierre = matchInput(h, 'idVolumenCierre') || '';
-        var body = 'contenidoAcuse=' + encodeURIComponent(cadenaCierreCompra(h)) +
-          '&idCompra=' + encodeURIComponent(idCompra) +
-          '&strMotivoCierre=' + encodeURIComponent(motivo) +
-          '&CodigoRegistro=' + encodeURIComponent(codigo) +
-          '&idComprador=' + mc[1] +
-          '&idVendedor=' + mv[1] +
-          (volCierre ? '&volumenCierre=' + encodeURIComponent(volCierre) : '');
+        var body = cuerpoCerrarCompra({
+          contenidoAcuse: cadenaCierreCompra(h),
+          idCompra: idCompra,
+          motivo: motivo,
+          codigo: codigo,
+          idComprador: mc[1],
+          idVendedor: mv[1],
+          volumenCierre: volCierre
+        });
         return apiPost('/GasLP/Compras/GuardarCerrarCompra', body);
       })
       .then(function (res) {
@@ -1149,13 +1211,56 @@
     });
   }
 
-  /* ============ LOTES ============ */
-  function filtroSolicitadas(f) { return pasaFiltroPermiso(f) && Number(f.idEstatus) === 0 && enRango(f.fechaCompra); }
-  function filtroAceptadas(f) { return pasaFiltroPermiso(f) && Number(f.idEstatus) === 1 && enRango(f.fechaCompra); }
-  function filtroEnTransito(it) { return pasaFiltroPermiso(it) && Number(it.idEstatus) === 4 && enRango(it.fechaDespacho); }
-  function filtroCerrables(c) {
-    return pasaFiltroPermiso(c) && (Number(c.idEstatus) === 1 || c.estatus === 'Aceptada') && !c.fechaCierre && enRango(c.fechaCompra);
+  /* ============ CUERPOS DE PETICIÓN ============ */
+  function cuerpoAceptar(c) {
+    return 'idCompra=' + c.idCompra + '&CodigoRegistro=' + encodeURIComponent(c.codigoRegistro);
   }
+  function cuerpoGuardarAceptar(c, idComprador, idVendedor) {
+    return 'idCompra=' + c.idCompra + '&CodigoRegistro=' + encodeURIComponent(c.codigoRegistro) +
+      '&idComprador=' + idComprador + '&idVendedor=' + idVendedor + '&cadenaAcuse=';
+  }
+  function cuerpoVerificaCompra(codigoRegistro) {
+    return 'prefixCodigoRegistro=' + encodeURIComponent(codigoRegistro) + '&proceso=2';
+  }
+  function cuerpoCerrarCompra(o) {
+    return 'contenidoAcuse=' + encodeURIComponent(o.contenidoAcuse) +
+      '&idCompra=' + encodeURIComponent(o.idCompra) +
+      '&strMotivoCierre=' + encodeURIComponent(o.motivo) +
+      '&CodigoRegistro=' + encodeURIComponent(o.codigo) +
+      '&idComprador=' + o.idComprador +
+      '&idVendedor=' + o.idVendedor +
+      (o.volumenCierre ? '&volumenCierre=' + encodeURIComponent(o.volumenCierre) : '');
+  }
+  function cuerpoDespacho(o) {
+    return 'de[fechaRegistro]=' + encodeURIComponent(o.fechaRegistro) +
+      '&de[FechaDespacho]=' + encodeURIComponent(o.fechaRegistro) +
+      '&de[idCompra]=' + o.idCompra +
+      '&de[CantidadDespachada]=' + o.cantidadDespachada +
+      '&de[IdVehiculo]=' + o.idVehiculo +
+      '&de[TransportePlaca]=' + encodeURIComponent(o.placas) +
+      '&CodigoRegistro=' + encodeURIComponent(o.codigoRegistro) +
+      '&idComprador=' + o.idComprador +
+      '&idVendedor=' + o.idVendedor +
+      '&complementoAcuse=' + encodeURIComponent(o.acuse) +
+      '&regCompraFlete=false';
+  }
+  function cuerpoRecepcion(o) {
+    return 'idBodega=-1' +
+      '&idEntrega=' + o.idEntrega +
+      '&FechaRegistro=' + encodeURIComponent(o.fechaRegistro) +
+      '&CostoFlete=*' +
+      '&CantidadRecibida=' + encodeURIComponent(o.volumen) +
+      '&CodigoRegistro=' + encodeURIComponent(o.codigoRegistro) +
+      '&idComprador=' + o.idComprador +
+      '&idVendedor=' + o.idVendedor +
+      '&dataAcuse=' + encodeURIComponent(o.acuse);
+  }
+
+  /* ============ LOTES ============ */
+  function filtroSolicitadas(f) { return esCompraVisible(f, 'solicitadas'); }
+  function filtroAceptadas(f) { return esCompraVisible(f, 'aceptadas'); }
+  function filtroEnTransito(it) { return esCompraVisible(it, 'enTransito'); }
+  function filtroCerrables(c) { return esCompraVisible(c, 'cerrables'); }
 
   function procesarLote(items, accion, verbo, modulo, permiso) {
     return secuencia(items, function (x) {
@@ -1183,14 +1288,13 @@
   function listarAceptar() { return datosDe('/GasLP/AceptarRechazarCompras/GetRegistrosCompras'); }
 
   function aceptarUna(f) {
-    return apiPost('/GasLP/AceptarRechazarCompras/Aceptar', 'idCompra=' + f.idCompra + '&CodigoRegistro=' + encodeURIComponent(f.codigoRegistro))
+    return apiPost('/GasLP/AceptarRechazarCompras/Aceptar', cuerpoAceptar(f))
       .then(function (det) {
         var mv = det.text.match(/var idVendedor\s*=\s*"(\d+)"/);
         var mc = det.text.match(/var idComprador\s*=\s*"(\d+)"/);
         if (!mv || !mc) throw new Error('detalle sin idVendedor/idComprador');
         return apiPost('/GasLP/AceptarRechazarCompras/Guardar_AceptarCompra',
-          'idCompra=' + f.idCompra + '&CodigoRegistro=' + encodeURIComponent(f.codigoRegistro) +
-          '&idComprador=' + mc[1] + '&idVendedor=' + mv[1] + '&cadenaAcuse=');
+          cuerpoGuardarAceptar(f, mc[1], mv[1]));
       })
       .then(function (res) {
         if (res.json && res.json.result === true) return { ok: true, msg: '' };
@@ -1218,7 +1322,7 @@
   }
 
   function despacharUna(f) {
-    return apiPost('/GasLP/Despacho/VerificaRegistroCompra', 'prefixCodigoRegistro=' + encodeURIComponent(f.codigoRegistro) + '&proceso=2')
+    return apiPost('/GasLP/Despacho/VerificaRegistroCompra', cuerpoVerificaCompra(f.codigoRegistro))
       .then(function (v) {
         var j = v.json || {};
         var d = j.data || j;
@@ -1260,17 +1364,17 @@
           idVehiculo: ctx.idVehiculo,
           placas: CONFIG.PLACAS
         });
-        var body = 'de[fechaRegistro]=' + encodeURIComponent(fd) +
-          '&de[FechaDespacho]=' + encodeURIComponent(fd) +
-          '&de[idCompra]=' + dc.idCompra +
-          '&de[CantidadDespachada]=' + dc.volumen_Solicitado +
-          '&de[IdVehiculo]=' + ctx.idVehiculo +
-          '&de[TransportePlaca]=' + encodeURIComponent(CONFIG.PLACAS) +
-          '&CodigoRegistro=' + encodeURIComponent(f.codigoRegistro) +
-          '&idComprador=' + dc.idComprador +
-          '&idVendedor=' + dc.idVendedor +
-          '&complementoAcuse=' + encodeURIComponent(acuse) +
-          '&regCompraFlete=false';
+        var body = cuerpoDespacho({
+          fechaRegistro: fd,
+          idCompra: dc.idCompra,
+          cantidadDespachada: dc.volumen_Solicitado,
+          idVehiculo: ctx.idVehiculo,
+          placas: CONFIG.PLACAS,
+          codigoRegistro: f.codigoRegistro,
+          idComprador: dc.idComprador,
+          idVendedor: dc.idVendedor,
+          acuse: acuse
+        });
         return apiPost('/GasLP/Despacho/Guardar_CompraDespacho', body);
       })
       .then(function (res) {
@@ -1324,15 +1428,15 @@
           idVehiculo: idVehiculo,
           placas: placas
         });
-        var body = 'idBodega=-1' +
-          '&idEntrega=' + it.idEntrega +
-          '&FechaRegistro=' + encodeURIComponent(fechaReg) +
-          '&CostoFlete=*' +
-          '&CantidadRecibida=' + encodeURIComponent(volumen) +
-          '&CodigoRegistro=' + encodeURIComponent(it.codigoRegistro) +
-          '&idComprador=' + it.idComprador +
-          '&idVendedor=' + it.idVendedor +
-          '&dataAcuse=' + encodeURIComponent(acuse);
+        var body = cuerpoRecepcion({
+          idEntrega: it.idEntrega,
+          fechaRegistro: fechaReg,
+          volumen: volumen,
+          codigoRegistro: it.codigoRegistro,
+          idComprador: it.idComprador,
+          idVendedor: it.idVendedor,
+          acuse: acuse
+        });
         return apiPost('/GasLP/Recepcion/Guardar_AceptarRecepcionRegistroDespacho', body)
           .then(function (res) {
             var j = res.json || {};
@@ -1344,7 +1448,7 @@
               return { ok: true, msg: '', idCompra: idCompra, idEntrega: it.idEntrega, codigo: it.codigoRegistro };
             }
             return apiPost('/GasLP/Despacho/VerificaRegistroCompra',
-              'prefixCodigoRegistro=' + encodeURIComponent(it.codigoRegistro) + '&proceso=2')
+              cuerpoVerificaCompra(it.codigoRegistro))
               .then(function (verificacion) {
                 var datos = verificacion.json && verificacion.json.datosCompra;
                 var recuperado = datos && datos.idCompra ? String(datos.idCompra) : '';
@@ -1364,7 +1468,7 @@
     return apiPostDatos('/GasLP/Compras/GetRegistrosCompras', 'idEstatus=-1').then(function (res) {
       var data = (res.json && res.json.data) || [];
       actualizarFiltroPermisos(data);
-      var cand = data.filter(function (c) { return pasaFiltroPermiso(c) && c.idEstatus !== 4 && c.estatus !== 'Rechazada' && enRango(c.fechaCompra); });
+      var cand = data.filter(function (c) { return esCompraVisible(c, 'listado'); });
       progAdd(cand.length);
       cand.forEach(function (c) {
         agregarCandidato(c, permiso);
@@ -1406,10 +1510,7 @@
       .then(function (res) {
         var data = (res.json && res.json.data) || [];
         actualizarFiltroPermisos(data);
-        return data.filter(function (c) {
-          if (!pasaFiltroPermiso(c) || !enRango(c.fechaCompra) || c.estatus === 'Rechazada') return false;
-          return CONFIG.INCLUIR_NO_CERRADAS_FACT || Number(c.idEstatus) === 2 || String(c.fechaCierre || '').trim() !== '';
-        });
+        return data.filter(function (c) { return esCompraVisible(c, 'facturas'); });
       });
   }
 
@@ -1848,7 +1949,7 @@
   /* ============ CSS ============ */
   /* house-ui (skills/house-ui/tokens.css): Geist Pixel 400, plano, esquinas rectas, paleta --ui-*.
      Tokens copiados aquí porque el userscript no puede cargar un CSS local. */
-  ET.ui.style(
+  if (typeof document !== 'undefined' && ET.ui) ET.ui.style(
     '#acs-side{' +
     'position:static;width:auto;min-height:100%;display:flex;flex-direction:column;background:var(--ui-bg);color:var(--ui-fg);font-family:var(--ui-font);font-weight:400;font-size:14px;line-height:1.43;}' +
     '#acs-side *{box-sizing:border-box;}' +
@@ -1896,10 +1997,32 @@
     '.acs-est.fail,.acs-fail{color:var(--ui-err-fg);}'
   );
 
+  // Export para pruebas en Node. En el navegador se ignora.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      enRango: enRango,
+      pasaFiltroPermiso: pasaFiltroPermiso,
+      esCompraVisible: esCompraVisible,
+      filtroSolicitadas: filtroSolicitadas,
+      filtroAceptadas: filtroAceptadas,
+      filtroEnTransito: filtroEnTransito,
+      filtroCerrables: filtroCerrables,
+      cuerpoAceptar: cuerpoAceptar,
+      cuerpoGuardarAceptar: cuerpoGuardarAceptar,
+      cuerpoVerificaCompra: cuerpoVerificaCompra,
+      cuerpoCerrarCompra: cuerpoCerrarCompra,
+      cuerpoDespacho: cuerpoDespacho,
+      cuerpoRecepcion: cuerpoRecepcion,
+      nombreArchivoTraspaso: nombreArchivoTraspaso
+    };
+  }
+
   /* ============ INICIO ============ */
   cargarConfig();
-  if (document.body) buildUI();
-  else window.addEventListener('DOMContentLoaded', buildUI);
+  if (typeof document !== 'undefined') {
+    if (document.body) buildUI();
+    else window.addEventListener('DOMContentLoaded', buildUI);
+  }
 
   ET.acs = ET.acs || {};
 })();
@@ -2183,33 +2306,11 @@
   const ordenPermisos = ps => ps.slice().sort((a, b) => (esPlantaDist(a) ? 1 : 0) - (esPlantaDist(b) ? 1 : 0));
 
   // Escaneo de permisos: la misma tabla #example que usa siretrac-traspasos.user.js.
+  // Alias del escáner único: { id, codigo, razon, actividad } para el resto de este módulo.
   function permisosDeTabla(doc) {
-    const tabla = doc.querySelector('#example');
-    if (!tabla) return [];
-    const cab = [...tabla.querySelectorAll('thead th')].map(x => nk(x.textContent || ''));
-    if (cab.length && (!cab.some(h => h.includes('permiso')) || !cab.some(h => h.includes('razon social')))) return [];
-    const out = [], vistos = new Set();
-    for (const tr of tabla.querySelectorAll('tbody tr')) {
-      const td = [...tr.cells];
-      if (td.length < 2) continue;
-      const codigo = (td[1].textContent || '').trim();
-      if (!codigo) continue;
-      let id = '';
-      const a = tr.querySelector('a[href*="idPermiso="]');
-      if (a) {
-        try { id = new URL(a.getAttribute('href'), 'https://siretrac.cne.gob.mx/').searchParams.get('idPermiso') || ''; }
-        catch (e) { id = ''; }
-      }
-      if (!id) {
-        const raw = (td[0].textContent || '').trim();
-        if (/^\d+$/.test(raw) && raw !== '0') id = raw;
-      }
-      if (!id || vistos.has(id)) continue;
-      vistos.add(id);
-      out.push({ id, codigo, razon: (td[2] ? td[2].textContent : '').trim(),
-        actividad: (td[4] ? td[4].textContent : '').trim() });
-    }
-    return out;
+    return ET.core.permisos.permisosDeDocumento(doc).map(p => ({
+      id: p.id, codigo: p.nombre, razon: p.razon, actividad: p.actividad
+    }));
   }
 
   // Export para node:test. En el navegador se ignora.
@@ -3056,6 +3157,23 @@
 (function () {
   'use strict';
   var ET = globalThis.EasyTrac;
+
+    var RE_FECHA = /^(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo),\s*(\d{1,2})\s+de\s+([a-záéíóúñü]+)\s+de\s+(\d{4})$/i;
+    var MESES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
+    var SECTORES = { comercial: 'Comercial y Servicio', 'comercial y servicio': 'Comercial y Servicio', residencial: 'Residencial' };
+    var ESTADOS = ['guanajuato', 'zacatecas', 'san luis potosi', 'jalisco', 'aguascalientes', 'nuevo leon', 'coahuila', 'tamaulipas', 'veracruz', 'michoacan', 'queretaro', 'hidalgo', 'mexico', 'ciudad de mexico', 'durango', 'chihuahua', 'sonora', 'sinaloa', 'nayarit', 'colima'];
+    // Sin jQuery no hay página: las funciones puras se prueban en Node y se
+    // exportan aquí porque el archivo retorna antes de montar la UI.
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            norm: norm,
+            sectorDesdeCelda: sectorDesdeCelda,
+            valoresDeLinea: valoresDeLinea,
+            resolverFilas: resolverFilas
+        };
+        return;
+    }
+
     if (typeof jQuery === 'undefined' || typeof $ === 'undefined') return;
 
     var esPaginaDisPla = $('#idtblVentasEntidad').length > 0;
@@ -3067,21 +3185,6 @@
         '<div style="font-size:12px;line-height:1.45;color:#333">Copia el bloque de ventas de tu Excel y p\u00E9galo (Ctrl+V) en esta p\u00E1gina. ' +
         'El script llena fecha, autoconsumo y las filas de Auto-tanque y Recipientes, y verifica cada campo.<br><br>' +
         'Tipo de p\u00E1gina: <b>' + (esPaginaDisPla ? 'Distribuidor por Planta' : 'Estaci\u00F3n de Servicio') + '</b></div>';
-
-    var RE_FECHA = /^(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo),\s*(\d{1,2})\s+de\s+([a-záéíóúñü]+)\s+de\s+(\d{4})$/i;
-    var MESES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
-    var SECTORES = { comercial: 'Comercial y Servicio', 'comercial y servicio': 'Comercial y Servicio', residencial: 'Residencial' };
-    var ESTADOS = ['guanajuato', 'zacatecas', 'san luis potosi', 'jalisco', 'aguascalientes', 'nuevo leon', 'coahuila', 'tamaulipas', 'veracruz', 'michoacan', 'queretaro', 'hidalgo', 'mexico', 'ciudad de mexico', 'durango', 'chihuahua', 'sonora', 'sinaloa', 'nayarit', 'colima'];
-    var ORDEN_FIJO = [
-        ['Guanajuato', 'San Felipe', 'Comercial'],
-        ['Guanajuato', 'San Felipe', 'Residencial'],
-        ['Zacatecas', 'Pinos', 'Comercial'],
-        ['Zacatecas', 'Pinos', 'Residencial'],
-        ['San Luis Potosí', 'Villa de Arriaga', 'Comercial'],
-        ['San Luis Potosí', 'Villa de Arriaga', 'Residencial'],
-        ['Jalisco', 'Ojuelos de Jalisco', 'Comercial'],
-        ['Jalisco', 'Ojuelos de Jalisco', 'Residencial']
-    ];
 
     function norm(s) {
         return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
@@ -3244,21 +3347,61 @@
         return ok1 && ok2;
     }
 
-    function buscarFilaAT(estado, municipio, sector) {
-        var table = $('#idtblVentasEntidad').DataTable();
-        var sMap = SECTORES[norm(sector)];
-        var targetSector = sMap || sector;
-        var encontrada = null;
-        table.rows().every(function () {
-            var d = this.data();
-            if (encontrada) return;
-            if (norm(d.entidadFederativa) === norm(estado) &&
-                norm(d.municipio) === norm(municipio) &&
-                norm(d.sector) === norm(targetSector)) {
-                encontrada = d;
+    // Compara una fila de la tabla con los datos del bloque; solo compara
+    // los campos que el bloque trae (nombre/municipio/sector pueden faltar).
+    function filaCoincide(fila, estado, municipio, sector) {
+        if (estado && norm(fila.entidadFederativa) !== norm(estado)) return false;
+        if (municipio && norm(fila.municipio) !== norm(municipio)) return false;
+        if (sector) {
+            var canon = SECTORES[norm(sector)] || sector;
+            if (norm(fila.sector) !== norm(canon)) return false;
+        }
+        return true;
+    }
+
+    // Resuelve las líneas del bloque pegado contra las filas reales de la
+    // tabla de Auto-tanque: por nombre/municipio/sector cuando el bloque los
+    // trae y, si no, por posición (siguiente fila libre). Sin tope de filas.
+    function resolverFilas(bloques, filas, col) {
+        var lista = filas || [];
+        var usadas = [];
+        var warns = [];
+        var asignaciones = [];
+        for (var b = 0; b < (bloques || []).length; b++) {
+            var sec = bloques[b] || {};
+            var lineas = sec.lineas || [];
+            for (var l = 0; l < lineas.length; l++) {
+                var linea = lineas[l];
+                var vals = valoresDeLinea(linea.nums || [], col || 0);
+                if (!vals) continue;
+                var estado = sec.nombre || '';
+                var municipio = sec.municipio || '';
+                var sector = sectorDesdeCelda(linea.celdas || []);
+                var conNombre = !!(estado || municipio || sector);
+                // shortcut: si parsear no reconoce el estado (lista ESTADOS) no hay
+                // nombre y se asigna por posición; una matriz desordenada puede cruzar filas.
+                var idx = -1;
+                for (var f = 0; f < lista.length; f++) {
+                    if (usadas[f]) continue;
+                    if (conNombre && !filaCoincide(lista[f], estado, municipio, sector)) continue;
+                    idx = f;
+                    break;
+                }
+                var etiqueta = (estado || '(sin nombre)') + ' / ' + (municipio || '-') + ' / ' + (sector || '-');
+                if (idx < 0) {
+                    warns.push('No se encontró la fila precargada para ' + etiqueta);
+                    continue;
+                }
+                usadas[idx] = true;
+                var fila = lista[idx];
+                asignaciones.push({
+                    fila: fila,
+                    valores: vals,
+                    etiqueta: (fila.entidadFederativa || estado) + ' / ' + (fila.municipio || municipio) + ' / ' + (fila.sector || sector || '-')
+                });
             }
-        });
-        return encontrada;
+        }
+        return { asignaciones: asignaciones, warns: warns };
     }
 
     function inputGrupo($i) {
@@ -3401,7 +3544,6 @@
         var filasLlenadas = 0;
         var sumVol = 0;
         var sumImp = 0;
-        var globalIdx = 0;
 
         if (diaSinVenta) {
             var fechaConfirmarDia = fecha || fechaActual || '(fecha no detectada)';
@@ -3428,28 +3570,17 @@
             toast(finalMsgsDia);
             return;
         } else {
-            for (var b = 0; b < p.bloques.length && b < 4; b++) {
-                var sec = p.bloques[b];
-                for (var l = 0; l < sec.lineas.length && globalIdx < ORDEN_FIJO.length; l++) {
-                    var linea = sec.lineas[l];
-                    var vals = valoresDeLinea(linea.nums, col);
-                    if (!vals) continue;
-                    var estado = sec.nombre || ORDEN_FIJO[globalIdx][0];
-                    var municipio = sec.municipio || ORDEN_FIJO[globalIdx][1];
-                    var sector = sectorDesdeCelda(linea.celdas) || ORDEN_FIJO[globalIdx][2];
-                    var fila = buscarFilaAT(estado, municipio, sector);
-                    if (!fila) {
-                        warns.push('No se encontró la fila precargada para ' + estado + ' / ' + municipio + ' / ' + sector);
-                        globalIdx++;
-                        continue;
-                    }
-                    var labelAT = estado + ' / ' + municipio + ' / ' + sector;
-                    await escribirYVerificarFila(fila, 'Volumen-' + fila.idVenta, 'ValorVenta-' + fila.idVenta, 'volumen', 'valorVenta', vals.vol, vals.imp, msgs, warns, labelAT);
-                    sumVol += vals.vol;
-                    sumImp += vals.imp;
-                    filasLlenadas++;
-                    globalIdx++;
-                }
+            var filasAT = [];
+            tableAT.rows().every(function () { filasAT.push(this.data()); });
+            var resuelto = resolverFilas(p.bloques, filasAT, col);
+            for (var rw = 0; rw < resuelto.warns.length; rw++) warns.push(resuelto.warns[rw]);
+            for (var a = 0; a < resuelto.asignaciones.length; a++) {
+                var as = resuelto.asignaciones[a];
+                var fila = as.fila;
+                await escribirYVerificarFila(fila, 'Volumen-' + fila.idVenta, 'ValorVenta-' + fila.idVenta, 'volumen', 'valorVenta', as.valores.vol, as.valores.imp, msgs, warns, as.etiqueta);
+                sumVol += as.valores.vol;
+                sumImp += as.valores.imp;
+                filasLlenadas++;
             }
 
             if (filasLlenadas) {
@@ -4671,61 +4802,17 @@
   // Permisos
   // ---------------------------------------------------------------------------
 
+  // Alias del escáner único: { id, permit, razonSocial, materia, activity } para el resto del módulo.
   function parsePermitsFromDocument(doc) {
-    const table = doc.querySelector('#example');
-    if (!table) return [];
-
-    const headers = Array.from(table.querySelectorAll('thead th')).map(function (th) {
-      return normalizeText(th.textContent);
+    return ET.core.permisos.permisosDeDocumento(doc).map(function (p) {
+      return {
+        id: p.id,
+        permit: p.nombre,
+        razonSocial: p.razon,
+        materia: p.materia,
+        activity: p.actividad,
+      };
     });
-    if (
-      headers.length &&
-      (!headers.some(function (header) {
-        return header.includes('permiso');
-      }) ||
-        !headers.some(function (header) {
-          return header.includes('razon social');
-        }))
-    ) {
-      return [];
-    }
-
-    const permits = [];
-    const seen = new Set();
-    const rows = table.querySelectorAll('tbody tr');
-    for (const row of rows) {
-      const cells = Array.from(row.cells);
-      if (cells.length < 2) continue;
-      const permitText = (cells[1].textContent || '').trim();
-      if (!permitText) continue;
-
-      let id = '';
-      const link = row.querySelector('a[href*="idPermiso="]');
-      if (link) {
-        try {
-          const href = link.getAttribute('href');
-          const url = new URL(href, 'https://siretrac.cne.gob.mx/');
-          id = url.searchParams.get('idPermiso') || '';
-        } catch (error) {
-          id = '';
-        }
-      }
-      if (!id) {
-        const rawId = (cells[0].textContent || '').trim();
-        if (/^\d+$/.test(rawId) && rawId !== '0') id = rawId;
-      }
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-
-      permits.push({
-        id: id,
-        permit: permitText,
-        razonSocial: (cells[2] ? cells[2].textContent : '').trim(),
-        materia: (cells[3] ? cells[3].textContent : '').trim(),
-        activity: (cells[4] ? cells[4].textContent : '').trim(),
-      });
-    }
-    return permits;
   }
 
   async function ensurePermits(force) {
@@ -7268,6 +7355,7 @@
   const api = {
     CONFIG: CONFIG,
     parseMatrix: parseMatrix,
+    parsePermitsFromDocument: parsePermitsFromDocument,
     parseVolume: parseVolume,
     parseDate: parseDate,
     normalizeText: normalizeText,

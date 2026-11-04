@@ -3,6 +3,23 @@
 (function () {
   'use strict';
   var ET = globalThis.EasyTrac;
+
+    var RE_FECHA = /^(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo),\s*(\d{1,2})\s+de\s+([a-záéíóúñü]+)\s+de\s+(\d{4})$/i;
+    var MESES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
+    var SECTORES = { comercial: 'Comercial y Servicio', 'comercial y servicio': 'Comercial y Servicio', residencial: 'Residencial' };
+    var ESTADOS = ['guanajuato', 'zacatecas', 'san luis potosi', 'jalisco', 'aguascalientes', 'nuevo leon', 'coahuila', 'tamaulipas', 'veracruz', 'michoacan', 'queretaro', 'hidalgo', 'mexico', 'ciudad de mexico', 'durango', 'chihuahua', 'sonora', 'sinaloa', 'nayarit', 'colima'];
+    // Sin jQuery no hay página: las funciones puras se prueban en Node y se
+    // exportan aquí porque el archivo retorna antes de montar la UI.
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            norm: norm,
+            sectorDesdeCelda: sectorDesdeCelda,
+            valoresDeLinea: valoresDeLinea,
+            resolverFilas: resolverFilas
+        };
+        return;
+    }
+
     if (typeof jQuery === 'undefined' || typeof $ === 'undefined') return;
 
     var esPaginaDisPla = $('#idtblVentasEntidad').length > 0;
@@ -14,21 +31,6 @@
         '<div style="font-size:12px;line-height:1.45;color:#333">Copia el bloque de ventas de tu Excel y p\u00E9galo (Ctrl+V) en esta p\u00E1gina. ' +
         'El script llena fecha, autoconsumo y las filas de Auto-tanque y Recipientes, y verifica cada campo.<br><br>' +
         'Tipo de p\u00E1gina: <b>' + (esPaginaDisPla ? 'Distribuidor por Planta' : 'Estaci\u00F3n de Servicio') + '</b></div>';
-
-    var RE_FECHA = /^(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo),\s*(\d{1,2})\s+de\s+([a-záéíóúñü]+)\s+de\s+(\d{4})$/i;
-    var MESES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
-    var SECTORES = { comercial: 'Comercial y Servicio', 'comercial y servicio': 'Comercial y Servicio', residencial: 'Residencial' };
-    var ESTADOS = ['guanajuato', 'zacatecas', 'san luis potosi', 'jalisco', 'aguascalientes', 'nuevo leon', 'coahuila', 'tamaulipas', 'veracruz', 'michoacan', 'queretaro', 'hidalgo', 'mexico', 'ciudad de mexico', 'durango', 'chihuahua', 'sonora', 'sinaloa', 'nayarit', 'colima'];
-    var ORDEN_FIJO = [
-        ['Guanajuato', 'San Felipe', 'Comercial'],
-        ['Guanajuato', 'San Felipe', 'Residencial'],
-        ['Zacatecas', 'Pinos', 'Comercial'],
-        ['Zacatecas', 'Pinos', 'Residencial'],
-        ['San Luis Potosí', 'Villa de Arriaga', 'Comercial'],
-        ['San Luis Potosí', 'Villa de Arriaga', 'Residencial'],
-        ['Jalisco', 'Ojuelos de Jalisco', 'Comercial'],
-        ['Jalisco', 'Ojuelos de Jalisco', 'Residencial']
-    ];
 
     function norm(s) {
         return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
@@ -191,21 +193,61 @@
         return ok1 && ok2;
     }
 
-    function buscarFilaAT(estado, municipio, sector) {
-        var table = $('#idtblVentasEntidad').DataTable();
-        var sMap = SECTORES[norm(sector)];
-        var targetSector = sMap || sector;
-        var encontrada = null;
-        table.rows().every(function () {
-            var d = this.data();
-            if (encontrada) return;
-            if (norm(d.entidadFederativa) === norm(estado) &&
-                norm(d.municipio) === norm(municipio) &&
-                norm(d.sector) === norm(targetSector)) {
-                encontrada = d;
+    // Compara una fila de la tabla con los datos del bloque; solo compara
+    // los campos que el bloque trae (nombre/municipio/sector pueden faltar).
+    function filaCoincide(fila, estado, municipio, sector) {
+        if (estado && norm(fila.entidadFederativa) !== norm(estado)) return false;
+        if (municipio && norm(fila.municipio) !== norm(municipio)) return false;
+        if (sector) {
+            var canon = SECTORES[norm(sector)] || sector;
+            if (norm(fila.sector) !== norm(canon)) return false;
+        }
+        return true;
+    }
+
+    // Resuelve las líneas del bloque pegado contra las filas reales de la
+    // tabla de Auto-tanque: por nombre/municipio/sector cuando el bloque los
+    // trae y, si no, por posición (siguiente fila libre). Sin tope de filas.
+    function resolverFilas(bloques, filas, col) {
+        var lista = filas || [];
+        var usadas = [];
+        var warns = [];
+        var asignaciones = [];
+        for (var b = 0; b < (bloques || []).length; b++) {
+            var sec = bloques[b] || {};
+            var lineas = sec.lineas || [];
+            for (var l = 0; l < lineas.length; l++) {
+                var linea = lineas[l];
+                var vals = valoresDeLinea(linea.nums || [], col || 0);
+                if (!vals) continue;
+                var estado = sec.nombre || '';
+                var municipio = sec.municipio || '';
+                var sector = sectorDesdeCelda(linea.celdas || []);
+                var conNombre = !!(estado || municipio || sector);
+                // shortcut: si parsear no reconoce el estado (lista ESTADOS) no hay
+                // nombre y se asigna por posición; una matriz desordenada puede cruzar filas.
+                var idx = -1;
+                for (var f = 0; f < lista.length; f++) {
+                    if (usadas[f]) continue;
+                    if (conNombre && !filaCoincide(lista[f], estado, municipio, sector)) continue;
+                    idx = f;
+                    break;
+                }
+                var etiqueta = (estado || '(sin nombre)') + ' / ' + (municipio || '-') + ' / ' + (sector || '-');
+                if (idx < 0) {
+                    warns.push('No se encontró la fila precargada para ' + etiqueta);
+                    continue;
+                }
+                usadas[idx] = true;
+                var fila = lista[idx];
+                asignaciones.push({
+                    fila: fila,
+                    valores: vals,
+                    etiqueta: (fila.entidadFederativa || estado) + ' / ' + (fila.municipio || municipio) + ' / ' + (fila.sector || sector || '-')
+                });
             }
-        });
-        return encontrada;
+        }
+        return { asignaciones: asignaciones, warns: warns };
     }
 
     function inputGrupo($i) {
@@ -348,7 +390,6 @@
         var filasLlenadas = 0;
         var sumVol = 0;
         var sumImp = 0;
-        var globalIdx = 0;
 
         if (diaSinVenta) {
             var fechaConfirmarDia = fecha || fechaActual || '(fecha no detectada)';
@@ -375,28 +416,17 @@
             toast(finalMsgsDia);
             return;
         } else {
-            for (var b = 0; b < p.bloques.length && b < 4; b++) {
-                var sec = p.bloques[b];
-                for (var l = 0; l < sec.lineas.length && globalIdx < ORDEN_FIJO.length; l++) {
-                    var linea = sec.lineas[l];
-                    var vals = valoresDeLinea(linea.nums, col);
-                    if (!vals) continue;
-                    var estado = sec.nombre || ORDEN_FIJO[globalIdx][0];
-                    var municipio = sec.municipio || ORDEN_FIJO[globalIdx][1];
-                    var sector = sectorDesdeCelda(linea.celdas) || ORDEN_FIJO[globalIdx][2];
-                    var fila = buscarFilaAT(estado, municipio, sector);
-                    if (!fila) {
-                        warns.push('No se encontró la fila precargada para ' + estado + ' / ' + municipio + ' / ' + sector);
-                        globalIdx++;
-                        continue;
-                    }
-                    var labelAT = estado + ' / ' + municipio + ' / ' + sector;
-                    await escribirYVerificarFila(fila, 'Volumen-' + fila.idVenta, 'ValorVenta-' + fila.idVenta, 'volumen', 'valorVenta', vals.vol, vals.imp, msgs, warns, labelAT);
-                    sumVol += vals.vol;
-                    sumImp += vals.imp;
-                    filasLlenadas++;
-                    globalIdx++;
-                }
+            var filasAT = [];
+            tableAT.rows().every(function () { filasAT.push(this.data()); });
+            var resuelto = resolverFilas(p.bloques, filasAT, col);
+            for (var rw = 0; rw < resuelto.warns.length; rw++) warns.push(resuelto.warns[rw]);
+            for (var a = 0; a < resuelto.asignaciones.length; a++) {
+                var as = resuelto.asignaciones[a];
+                var fila = as.fila;
+                await escribirYVerificarFila(fila, 'Volumen-' + fila.idVenta, 'ValorVenta-' + fila.idVenta, 'volumen', 'valorVenta', as.valores.vol, as.valores.imp, msgs, warns, as.etiqueta);
+                sumVol += as.valores.vol;
+                sumImp += as.valores.imp;
+                filasLlenadas++;
             }
 
             if (filasLlenadas) {

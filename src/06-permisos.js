@@ -22,6 +22,48 @@
     return lista;
   }
 
+  // Forma canónica: { id, nombre, href, razon, materia, actividad }; nombre = texto del permiso, href = enlace SeleccionarPermiso.
+  function permisosDeDocumento(doc) {
+    var tabla = doc.querySelector('#example');
+    if (!tabla) return [];
+    var norm = function (t) {
+      return String(t == null ? '' : t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    };
+    var cab = [].map.call(tabla.querySelectorAll('thead th'), function (x) { return norm(x.textContent || ''); });
+    if (cab.length && (!cab.some(function (h) { return h.indexOf('permiso') !== -1; }) ||
+      !cab.some(function (h) { return h.indexOf('razon social') !== -1; }))) return [];
+    var lista = [], vistos = Object.create(null);
+    var filas = tabla.querySelectorAll('tbody tr');
+    for (var i = 0; i < filas.length; i++) {
+      var tr = filas[i], tds = tr.cells || [];
+      if (tds.length < 2) continue;
+      var nombre = String(tds[1].textContent || '').trim();
+      if (!nombre) continue;
+      var a = tr.querySelector('a[href*="idPermiso="]');
+      var href = a ? (a.getAttribute('href') || '') : '';
+      var id = '';
+      if (href) {
+        try { id = new URL(href, 'https://siretrac.cne.gob.mx/').searchParams.get('idPermiso') || ''; }
+        catch (e) { id = ''; }
+      }
+      if (!id) {
+        var raw = String(tds[0] ? tds[0].textContent : '').trim();
+        if (/^\d+$/.test(raw) && raw !== '0') id = raw;
+      }
+      if (!id || vistos[id]) continue;
+      vistos[id] = true;
+      lista.push({
+        id: id,
+        nombre: nombre,
+        href: href,
+        razon: String(tds[2] ? tds[2].textContent : '').trim(),
+        materia: String(tds[3] ? tds[3].textContent : '').trim(),
+        actividad: String(tds[4] ? tds[4].textContent : '').trim()
+      });
+    }
+    return lista;
+  }
+
   function permisoUrlPorId(id) {
     return '/OrdenDePedido/SeleccionarPermiso?idPermiso=' + encodeURIComponent(id) +
       '&permiso=&idPermisionario=0&idPermisoMateria=0&idPermisoActividad=0&razonSocial=&estatus=False&capacidadOperativa=0';
@@ -40,6 +82,7 @@
   ET.core = ET.core || {};
   ET.core.permisos = {
     escanearPermisos: escanearPermisos,
+    permisosDeDocumento: permisosDeDocumento,
     permisoUrlPorId: permisoUrlPorId,
     permisoDeUrl: permisoDeUrl
   };

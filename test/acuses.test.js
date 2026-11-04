@@ -3,6 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 require('../src/01-core.js');
+require('../src/05-text.js');
+require('../src/06-permisos.js');
 const api = require('../src/30-acuses.js');
 
 const iso = d => d ? d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') : null;

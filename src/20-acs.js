@@ -69,13 +69,30 @@
 
 
 
-  function enRango(fechaDMA) {
-    try { var fc = parseDia(fechaDMA); return fc >= parseISO(CONFIG.DESDE) && fc <= parseISO(CONFIG.HASTA); }
+  function enRango(fechaDMA, cfg) {
+    cfg = cfg || CONFIG;
+    try { var fc = parseDia(fechaDMA); return fc >= parseISO(cfg.DESDE) && fc <= parseISO(cfg.HASTA); }
     catch (e) { return false; }
   }
-  function pasaFiltroPermiso(compra) {
-    if (CONFIG.PERMISO_FILTRO && String(compra && compra.permiso_Vendedor || '').trim() !== String(CONFIG.PERMISO_FILTRO).trim()) return false;
+  function pasaFiltroPermiso(compra, cfg) {
+    cfg = cfg || CONFIG;
+    if (cfg.PERMISO_FILTRO && String(compra && compra.permiso_Vendedor || '').trim() !== String(cfg.PERMISO_FILTRO).trim()) return false;
     return true;
+  }
+  /* ¿Entra la compra en la lista `tipo`? Estatus + fecha (y permiso vendedor si hay filtro). */
+  function esCompraVisible(compra, tipo, cfg) {
+    cfg = cfg || CONFIG;
+    if (!compra || !pasaFiltroPermiso(compra, cfg)) return false;
+    var estatus = Number(compra.idEstatus);
+    var rechazada = compra.estatus === 'Rechazada';
+    if (tipo === 'solicitadas') return estatus === 0 && enRango(compra.fechaCompra, cfg);
+    if (tipo === 'aceptadas') return estatus === 1 && enRango(compra.fechaCompra, cfg);
+    if (tipo === 'enTransito') return estatus === 4 && enRango(compra.fechaDespacho, cfg);
+    if (tipo === 'cerrables') return (estatus === 1 || compra.estatus === 'Aceptada') && !compra.fechaCierre && enRango(compra.fechaCompra, cfg);
+    if (tipo === 'listado') return compra.idEstatus !== 4 && !rechazada && enRango(compra.fechaCompra, cfg);
+    if (tipo === 'facturas') return !rechazada && enRango(compra.fechaCompra, cfg) &&
+      (cfg.INCLUIR_NO_CERRADAS_FACT || estatus === 2 || String(compra.fechaCierre || '').trim() !== '');
+    return false;
   }
   function actualizarFiltroPermisos(data) {
     var select = document.querySelector('#acs-permiso');
@@ -324,13 +341,15 @@
           throw new Error('requiere motivo de cierre (>=5 caracteres) en configuración');
         }
         var volCierre = matchInput(h, 'idVolumenCierre') || '';
-        var body = 'contenidoAcuse=' + encodeURIComponent(cadenaCierreCompra(h)) +
-          '&idCompra=' + encodeURIComponent(idCompra) +
-          '&strMotivoCierre=' + encodeURIComponent(motivo) +
-          '&CodigoRegistro=' + encodeURIComponent(codigo) +
-          '&idComprador=' + mc[1] +
-          '&idVendedor=' + mv[1] +
-          (volCierre ? '&volumenCierre=' + encodeURIComponent(volCierre) : '');
+        var body = cuerpoCerrarCompra({
+          contenidoAcuse: cadenaCierreCompra(h),
+          idCompra: idCompra,
+          motivo: motivo,
+          codigo: codigo,
+          idComprador: mc[1],
+          idVendedor: mv[1],
+          volumenCierre: volCierre
+        });
         return apiPost('/GasLP/Compras/GuardarCerrarCompra', body);
       })
       .then(function (res) {
@@ -502,13 +521,56 @@
     });
   }
 
-  /* ============ LOTES ============ */
-  function filtroSolicitadas(f) { return pasaFiltroPermiso(f) && Number(f.idEstatus) === 0 && enRango(f.fechaCompra); }
-  function filtroAceptadas(f) { return pasaFiltroPermiso(f) && Number(f.idEstatus) === 1 && enRango(f.fechaCompra); }
-  function filtroEnTransito(it) { return pasaFiltroPermiso(it) && Number(it.idEstatus) === 4 && enRango(it.fechaDespacho); }
-  function filtroCerrables(c) {
-    return pasaFiltroPermiso(c) && (Number(c.idEstatus) === 1 || c.estatus === 'Aceptada') && !c.fechaCierre && enRango(c.fechaCompra);
+  /* ============ CUERPOS DE PETICIÓN ============ */
+  function cuerpoAceptar(c) {
+    return 'idCompra=' + c.idCompra + '&CodigoRegistro=' + encodeURIComponent(c.codigoRegistro);
   }
+  function cuerpoGuardarAceptar(c, idComprador, idVendedor) {
+    return 'idCompra=' + c.idCompra + '&CodigoRegistro=' + encodeURIComponent(c.codigoRegistro) +
+      '&idComprador=' + idComprador + '&idVendedor=' + idVendedor + '&cadenaAcuse=';
+  }
+  function cuerpoVerificaCompra(codigoRegistro) {
+    return 'prefixCodigoRegistro=' + encodeURIComponent(codigoRegistro) + '&proceso=2';
+  }
+  function cuerpoCerrarCompra(o) {
+    return 'contenidoAcuse=' + encodeURIComponent(o.contenidoAcuse) +
+      '&idCompra=' + encodeURIComponent(o.idCompra) +
+      '&strMotivoCierre=' + encodeURIComponent(o.motivo) +
+      '&CodigoRegistro=' + encodeURIComponent(o.codigo) +
+      '&idComprador=' + o.idComprador +
+      '&idVendedor=' + o.idVendedor +
+      (o.volumenCierre ? '&volumenCierre=' + encodeURIComponent(o.volumenCierre) : '');
+  }
+  function cuerpoDespacho(o) {
+    return 'de[fechaRegistro]=' + encodeURIComponent(o.fechaRegistro) +
+      '&de[FechaDespacho]=' + encodeURIComponent(o.fechaRegistro) +
+      '&de[idCompra]=' + o.idCompra +
+      '&de[CantidadDespachada]=' + o.cantidadDespachada +
+      '&de[IdVehiculo]=' + o.idVehiculo +
+      '&de[TransportePlaca]=' + encodeURIComponent(o.placas) +
+      '&CodigoRegistro=' + encodeURIComponent(o.codigoRegistro) +
+      '&idComprador=' + o.idComprador +
+      '&idVendedor=' + o.idVendedor +
+      '&complementoAcuse=' + encodeURIComponent(o.acuse) +
+      '&regCompraFlete=false';
+  }
+  function cuerpoRecepcion(o) {
+    return 'idBodega=-1' +
+      '&idEntrega=' + o.idEntrega +
+      '&FechaRegistro=' + encodeURIComponent(o.fechaRegistro) +
+      '&CostoFlete=*' +
+      '&CantidadRecibida=' + encodeURIComponent(o.volumen) +
+      '&CodigoRegistro=' + encodeURIComponent(o.codigoRegistro) +
+      '&idComprador=' + o.idComprador +
+      '&idVendedor=' + o.idVendedor +
+      '&dataAcuse=' + encodeURIComponent(o.acuse);
+  }
+
+  /* ============ LOTES ============ */
+  function filtroSolicitadas(f) { return esCompraVisible(f, 'solicitadas'); }
+  function filtroAceptadas(f) { return esCompraVisible(f, 'aceptadas'); }
+  function filtroEnTransito(it) { return esCompraVisible(it, 'enTransito'); }
+  function filtroCerrables(c) { return esCompraVisible(c, 'cerrables'); }
 
   function procesarLote(items, accion, verbo, modulo, permiso) {
     return secuencia(items, function (x) {
@@ -536,14 +598,13 @@
   function listarAceptar() { return datosDe('/GasLP/AceptarRechazarCompras/GetRegistrosCompras'); }
 
   function aceptarUna(f) {
-    return apiPost('/GasLP/AceptarRechazarCompras/Aceptar', 'idCompra=' + f.idCompra + '&CodigoRegistro=' + encodeURIComponent(f.codigoRegistro))
+    return apiPost('/GasLP/AceptarRechazarCompras/Aceptar', cuerpoAceptar(f))
       .then(function (det) {
         var mv = det.text.match(/var idVendedor\s*=\s*"(\d+)"/);
         var mc = det.text.match(/var idComprador\s*=\s*"(\d+)"/);
         if (!mv || !mc) throw new Error('detalle sin idVendedor/idComprador');
         return apiPost('/GasLP/AceptarRechazarCompras/Guardar_AceptarCompra',
-          'idCompra=' + f.idCompra + '&CodigoRegistro=' + encodeURIComponent(f.codigoRegistro) +
-          '&idComprador=' + mc[1] + '&idVendedor=' + mv[1] + '&cadenaAcuse=');
+          cuerpoGuardarAceptar(f, mc[1], mv[1]));
       })
       .then(function (res) {
         if (res.json && res.json.result === true) return { ok: true, msg: '' };
@@ -571,7 +632,7 @@
   }
 
   function despacharUna(f) {
-    return apiPost('/GasLP/Despacho/VerificaRegistroCompra', 'prefixCodigoRegistro=' + encodeURIComponent(f.codigoRegistro) + '&proceso=2')
+    return apiPost('/GasLP/Despacho/VerificaRegistroCompra', cuerpoVerificaCompra(f.codigoRegistro))
       .then(function (v) {
         var j = v.json || {};
         var d = j.data || j;
@@ -613,17 +674,17 @@
           idVehiculo: ctx.idVehiculo,
           placas: CONFIG.PLACAS
         });
-        var body = 'de[fechaRegistro]=' + encodeURIComponent(fd) +
-          '&de[FechaDespacho]=' + encodeURIComponent(fd) +
-          '&de[idCompra]=' + dc.idCompra +
-          '&de[CantidadDespachada]=' + dc.volumen_Solicitado +
-          '&de[IdVehiculo]=' + ctx.idVehiculo +
-          '&de[TransportePlaca]=' + encodeURIComponent(CONFIG.PLACAS) +
-          '&CodigoRegistro=' + encodeURIComponent(f.codigoRegistro) +
-          '&idComprador=' + dc.idComprador +
-          '&idVendedor=' + dc.idVendedor +
-          '&complementoAcuse=' + encodeURIComponent(acuse) +
-          '&regCompraFlete=false';
+        var body = cuerpoDespacho({
+          fechaRegistro: fd,
+          idCompra: dc.idCompra,
+          cantidadDespachada: dc.volumen_Solicitado,
+          idVehiculo: ctx.idVehiculo,
+          placas: CONFIG.PLACAS,
+          codigoRegistro: f.codigoRegistro,
+          idComprador: dc.idComprador,
+          idVendedor: dc.idVendedor,
+          acuse: acuse
+        });
         return apiPost('/GasLP/Despacho/Guardar_CompraDespacho', body);
       })
       .then(function (res) {
@@ -677,15 +738,15 @@
           idVehiculo: idVehiculo,
           placas: placas
         });
-        var body = 'idBodega=-1' +
-          '&idEntrega=' + it.idEntrega +
-          '&FechaRegistro=' + encodeURIComponent(fechaReg) +
-          '&CostoFlete=*' +
-          '&CantidadRecibida=' + encodeURIComponent(volumen) +
-          '&CodigoRegistro=' + encodeURIComponent(it.codigoRegistro) +
-          '&idComprador=' + it.idComprador +
-          '&idVendedor=' + it.idVendedor +
-          '&dataAcuse=' + encodeURIComponent(acuse);
+        var body = cuerpoRecepcion({
+          idEntrega: it.idEntrega,
+          fechaRegistro: fechaReg,
+          volumen: volumen,
+          codigoRegistro: it.codigoRegistro,
+          idComprador: it.idComprador,
+          idVendedor: it.idVendedor,
+          acuse: acuse
+        });
         return apiPost('/GasLP/Recepcion/Guardar_AceptarRecepcionRegistroDespacho', body)
           .then(function (res) {
             var j = res.json || {};
@@ -697,7 +758,7 @@
               return { ok: true, msg: '', idCompra: idCompra, idEntrega: it.idEntrega, codigo: it.codigoRegistro };
             }
             return apiPost('/GasLP/Despacho/VerificaRegistroCompra',
-              'prefixCodigoRegistro=' + encodeURIComponent(it.codigoRegistro) + '&proceso=2')
+              cuerpoVerificaCompra(it.codigoRegistro))
               .then(function (verificacion) {
                 var datos = verificacion.json && verificacion.json.datosCompra;
                 var recuperado = datos && datos.idCompra ? String(datos.idCompra) : '';
@@ -717,7 +778,7 @@
     return apiPostDatos('/GasLP/Compras/GetRegistrosCompras', 'idEstatus=-1').then(function (res) {
       var data = (res.json && res.json.data) || [];
       actualizarFiltroPermisos(data);
-      var cand = data.filter(function (c) { return pasaFiltroPermiso(c) && c.idEstatus !== 4 && c.estatus !== 'Rechazada' && enRango(c.fechaCompra); });
+      var cand = data.filter(function (c) { return esCompraVisible(c, 'listado'); });
       progAdd(cand.length);
       cand.forEach(function (c) {
         agregarCandidato(c, permiso);
@@ -759,10 +820,7 @@
       .then(function (res) {
         var data = (res.json && res.json.data) || [];
         actualizarFiltroPermisos(data);
-        return data.filter(function (c) {
-          if (!pasaFiltroPermiso(c) || !enRango(c.fechaCompra) || c.estatus === 'Rechazada') return false;
-          return CONFIG.INCLUIR_NO_CERRADAS_FACT || Number(c.idEstatus) === 2 || String(c.fechaCierre || '').trim() !== '';
-        });
+        return data.filter(function (c) { return esCompraVisible(c, 'facturas'); });
       });
   }
 
@@ -1201,7 +1259,7 @@
   /* ============ CSS ============ */
   /* house-ui (skills/house-ui/tokens.css): Geist Pixel 400, plano, esquinas rectas, paleta --ui-*.
      Tokens copiados aquí porque el userscript no puede cargar un CSS local. */
-  ET.ui.style(
+  if (typeof document !== 'undefined' && ET.ui) ET.ui.style(
     '#acs-side{' +
     'position:static;width:auto;min-height:100%;display:flex;flex-direction:column;background:var(--ui-bg);color:var(--ui-fg);font-family:var(--ui-font);font-weight:400;font-size:14px;line-height:1.43;}' +
     '#acs-side *{box-sizing:border-box;}' +
@@ -1249,10 +1307,32 @@
     '.acs-est.fail,.acs-fail{color:var(--ui-err-fg);}'
   );
 
+  // Export para pruebas en Node. En el navegador se ignora.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      enRango: enRango,
+      pasaFiltroPermiso: pasaFiltroPermiso,
+      esCompraVisible: esCompraVisible,
+      filtroSolicitadas: filtroSolicitadas,
+      filtroAceptadas: filtroAceptadas,
+      filtroEnTransito: filtroEnTransito,
+      filtroCerrables: filtroCerrables,
+      cuerpoAceptar: cuerpoAceptar,
+      cuerpoGuardarAceptar: cuerpoGuardarAceptar,
+      cuerpoVerificaCompra: cuerpoVerificaCompra,
+      cuerpoCerrarCompra: cuerpoCerrarCompra,
+      cuerpoDespacho: cuerpoDespacho,
+      cuerpoRecepcion: cuerpoRecepcion,
+      nombreArchivoTraspaso: nombreArchivoTraspaso
+    };
+  }
+
   /* ============ INICIO ============ */
   cargarConfig();
-  if (document.body) buildUI();
-  else window.addEventListener('DOMContentLoaded', buildUI);
+  if (typeof document !== 'undefined') {
+    if (document.body) buildUI();
+    else window.addEventListener('DOMContentLoaded', buildUI);
+  }
 
   ET.acs = ET.acs || {};
 })();

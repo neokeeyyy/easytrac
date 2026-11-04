@@ -276,33 +276,11 @@
   const ordenPermisos = ps => ps.slice().sort((a, b) => (esPlantaDist(a) ? 1 : 0) - (esPlantaDist(b) ? 1 : 0));
 
   // Escaneo de permisos: la misma tabla #example que usa siretrac-traspasos.user.js.
+  // Alias del escáner único: { id, codigo, razon, actividad } para el resto de este módulo.
   function permisosDeTabla(doc) {
-    const tabla = doc.querySelector('#example');
-    if (!tabla) return [];
-    const cab = [...tabla.querySelectorAll('thead th')].map(x => nk(x.textContent || ''));
-    if (cab.length && (!cab.some(h => h.includes('permiso')) || !cab.some(h => h.includes('razon social')))) return [];
-    const out = [], vistos = new Set();
-    for (const tr of tabla.querySelectorAll('tbody tr')) {
-      const td = [...tr.cells];
-      if (td.length < 2) continue;
-      const codigo = (td[1].textContent || '').trim();
-      if (!codigo) continue;
-      let id = '';
-      const a = tr.querySelector('a[href*="idPermiso="]');
-      if (a) {
-        try { id = new URL(a.getAttribute('href'), 'https://siretrac.cne.gob.mx/').searchParams.get('idPermiso') || ''; }
-        catch (e) { id = ''; }
-      }
-      if (!id) {
-        const raw = (td[0].textContent || '').trim();
-        if (/^\d+$/.test(raw) && raw !== '0') id = raw;
-      }
-      if (!id || vistos.has(id)) continue;
-      vistos.add(id);
-      out.push({ id, codigo, razon: (td[2] ? td[2].textContent : '').trim(),
-        actividad: (td[4] ? td[4].textContent : '').trim() });
-    }
-    return out;
+    return ET.core.permisos.permisosDeDocumento(doc).map(p => ({
+      id: p.id, codigo: p.nombre, razon: p.razon, actividad: p.actividad
+    }));
   }
 
   // Export para node:test. En el navegador se ignora.

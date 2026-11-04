@@ -820,61 +820,17 @@
   // Permisos
   // ---------------------------------------------------------------------------
 
+  // Alias del escáner único: { id, permit, razonSocial, materia, activity } para el resto del módulo.
   function parsePermitsFromDocument(doc) {
-    const table = doc.querySelector('#example');
-    if (!table) return [];
-
-    const headers = Array.from(table.querySelectorAll('thead th')).map(function (th) {
-      return normalizeText(th.textContent);
+    return ET.core.permisos.permisosDeDocumento(doc).map(function (p) {
+      return {
+        id: p.id,
+        permit: p.nombre,
+        razonSocial: p.razon,
+        materia: p.materia,
+        activity: p.actividad,
+      };
     });
-    if (
-      headers.length &&
-      (!headers.some(function (header) {
-        return header.includes('permiso');
-      }) ||
-        !headers.some(function (header) {
-          return header.includes('razon social');
-        }))
-    ) {
-      return [];
-    }
-
-    const permits = [];
-    const seen = new Set();
-    const rows = table.querySelectorAll('tbody tr');
-    for (const row of rows) {
-      const cells = Array.from(row.cells);
-      if (cells.length < 2) continue;
-      const permitText = (cells[1].textContent || '').trim();
-      if (!permitText) continue;
-
-      let id = '';
-      const link = row.querySelector('a[href*="idPermiso="]');
-      if (link) {
-        try {
-          const href = link.getAttribute('href');
-          const url = new URL(href, 'https://siretrac.cne.gob.mx/');
-          id = url.searchParams.get('idPermiso') || '';
-        } catch (error) {
-          id = '';
-        }
-      }
-      if (!id) {
-        const rawId = (cells[0].textContent || '').trim();
-        if (/^\d+$/.test(rawId) && rawId !== '0') id = rawId;
-      }
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-
-      permits.push({
-        id: id,
-        permit: permitText,
-        razonSocial: (cells[2] ? cells[2].textContent : '').trim(),
-        materia: (cells[3] ? cells[3].textContent : '').trim(),
-        activity: (cells[4] ? cells[4].textContent : '').trim(),
-      });
-    }
-    return permits;
   }
 
   async function ensurePermits(force) {
@@ -3417,6 +3373,7 @@
   const api = {
     CONFIG: CONFIG,
     parseMatrix: parseMatrix,
+    parsePermitsFromDocument: parsePermitsFromDocument,
     parseVolume: parseVolume,
     parseDate: parseDate,
     normalizeText: normalizeText,
