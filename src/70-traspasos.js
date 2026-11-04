@@ -2625,7 +2625,7 @@
           </div>
           <div class="st-card">
             <label class="st-field">Estaciones (una por línea)
-              <textarea data-role="stations" rows="5" placeholder="Ojuelos-Lagos&#10;Matancillas"></textarea>
+              <textarea data-role="stations" rows="5" placeholder="Una estación por línea"></textarea>
             </label>
             <div class="st-actions">
               <button type="button" data-action="stations-from-matrix">Cargar de la matriz</button>

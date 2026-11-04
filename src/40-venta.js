@@ -117,6 +117,7 @@
                 if (esCab) { fase = 'recipientes'; continue; }
                 if (nums.length === 2 && nBloques >= 4) { res.filaTotal = nums.map(aNumero); fase = 'recipientes'; continue; }
                 if (nums.length === 3 || nums.length === 6) {
+                    if (!seccion.primera && c[0] !== '') seccion.primera = c[0];
                     if (ESTADOS.indexOf(norm(c[0])) >= 0 && c[0] !== '') {
                         seccion.nombre = c[0];
                         seccion.municipio = c[1] || '';
@@ -213,6 +214,13 @@
         var usadas = [];
         var warns = [];
         var asignaciones = [];
+        /* Estados que existen en la tabla de esta empresa: así la lista ESTADOS
+           solo actúa de pista y sirve cualquier entidad federativa. */
+        var entidades = {};
+        for (var e = 0; e < lista.length; e++) {
+            var ent = lista[e].entidadFederativa;
+            if (ent) entidades[norm(ent)] = ent;
+        }
         for (var b = 0; b < (bloques || []).length; b++) {
             var sec = bloques[b] || {};
             var lineas = sec.lineas || [];
@@ -220,12 +228,12 @@
                 var linea = lineas[l];
                 var vals = valoresDeLinea(linea.nums || [], col || 0);
                 if (!vals) continue;
-                var estado = sec.nombre || '';
+                var estado = sec.nombre || entidades[norm(sec.primera || '')] || '';
                 var municipio = sec.municipio || '';
                 var sector = sectorDesdeCelda(linea.celdas || []);
                 var conNombre = !!(estado || municipio || sector);
-                // shortcut: si parsear no reconoce el estado (lista ESTADOS) no hay
-                // nombre y se asigna por posición; una matriz desordenada puede cruzar filas.
+                // shortcut: si el bloque no trae estado/municipio/sector reconocibles se
+                // asigna por posición; una matriz desordenada puede cruzar filas.
                 var idx = -1;
                 for (var f = 0; f < lista.length; f++) {
                     if (usadas[f]) continue;

@@ -117,3 +117,19 @@ test('lineas sin volumen/importe se ignoran y la columna 6 valores', () => {
   assert.deepEqual(r.asignaciones.map((a) => a.valores), [{ vol: 4, imp: 6 }]);
   assert.equal(r.asignaciones[0].fila.idVenta, 1);
 });
+
+test('estado fuera de la lista ESTADOS: iguala contra la tabla de la empresa', () => {
+  const filas = [
+    fila(1, 'Puebla', 'Zacatlan', 'Comercial y Servicio'),
+    fila(2, 'Puebla', 'Zacatlan', 'Residencial'),
+    fila(3, 'Yucatan', 'Merida', 'Comercial y Servicio'),
+  ];
+  const bloques = [
+    { primera: 'Yucatan', lineas: [{ celdas: ['Comercial', '9', '90'], nums: [9, 0, 90] }] },
+    { primera: 'Puebla', lineas: [{ celdas: ['Residencial', '4', '40'], nums: [4, 0, 40] }] },
+  ];
+
+  const r = resolverFilas(bloques, filas, 0);
+
+  assert.deepEqual(r.asignaciones.map((a) => a.fila.idVenta), [3, 2]);
+});

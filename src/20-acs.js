@@ -16,16 +16,16 @@
     permisoUrlPorId = ET.core.permisos.permisoUrlPorId, permisoDeUrl = ET.core.permisos.permisoDeUrl;
   /* ============ CONFIGURACIÓN ============ */
   var DEFAULTS = {
-    DESDE: '2026-08-10',        // rango de fechaCompra (Aceptar/Despachar) y fechaDespacho (Recepcionar)
-    HASTA: '2026-08-16',
-    VEHICULO: 'A002252',        // vehículo que despacha (Despachar)
-    PLACAS: 'JU47194',          // placa del vehículo (Despachar)
+    DESDE: '',                  // rango de fechaCompra (Aceptar/Despachar) y fechaDespacho (Recepcionar)
+    HASTA: '',                  // vacío = últimos 7 días, ver cargarConfig
+    VEHICULO: '',               // lo llena cada empresa en Ajustes (Despachar)
+    PLACAS: '',                 // idem
     DELAY_MS: 800,              // espera entre operaciones
     DATA_RETRIES: 3,            // reintentos solo para consultas
     DATA_RETRY_BASE_MS: 100,    // backoff inicial de consultas
     CERRAR_AL_RECEPCIONAR: true,// cierra la compra (EsCierre, Destino=13) al recepcionar
     RECORRER_PERMISOS: true,    // recorre todos los permisos de la sesión (si los descubre)
-    PERMISOS: [],               // [] = descubrir del sitio; o forzar: [1295,2846,3076,3369,3920,4171,4201,4334,5621]
+    PERMISOS: [],               // [] = descubrir del sitio; o forzar: [id, id, ...]
     PERMISO_FILTRO: '',         // permiso vendedor específico; vacío = todos
     MOTIVO_CIERRE: '',           // motivo de cierre (>=5 caracteres) si la compra lo exige (Cerrar manual)
     INCLUIR_NO_CERRADAS_FACT: false, // Facturas: incluir compras de cualquier estatus, no solo cerradas
@@ -38,6 +38,12 @@
   function cargarConfig() {
     try { Object.assign(CONFIG, DEFAULTS, ET.store.get('acs_cfg', {})); }
     catch (e) { Object.assign(CONFIG, DEFAULTS); }
+    /* Sin fechas guardadas, último tramo de 7 días: ningún dato de otra empresa. */
+    if (!CONFIG.DESDE || !CONFIG.HASTA) {
+      var hoy = new Date();
+      CONFIG.DESDE = CONFIG.DESDE || toISO(new Date(hoy.getTime() - 6 * 86400000));
+      CONFIG.HASTA = CONFIG.HASTA || toISO(hoy);
+    }
   }
   function guardarConfig() { ET.store.set('acs_cfg', CONFIG); }
 
@@ -647,6 +653,7 @@
           'idPermisoActividad_Vendedor',
           'idPermisoActividadVendedor'
         ]);
+        if (!CONFIG.VEHICULO) throw new Error('Falta el vehículo que despacha: llénalo en Ajustes antes de despachar.');
         return apiPost('/GasLP/Despacho/VerificaRegistroVehiculo2',
           'vehiculo=' + encodeURIComponent(CONFIG.VEHICULO) +
           '&CompradorId=' + dc.idComprador +

@@ -42,6 +42,17 @@ test('boots on a GasLP page with the shared sidebar', async () => {
   expect(win.document.querySelectorAll('#shub-root').length).toBe(1);
 });
 
+test('ACS arranca sin vehiculo, placas ni fechas de otra empresa', async () => {
+  const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
+  const doc = win.document;
+  const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+
+  expect(doc.querySelector('#acs-vehiculo').value).toBe('');
+  expect(doc.querySelector('#acs-placas').value).toBe('');
+  expect(doc.querySelector('#acs-hasta').value).toBe(iso(new Date()));
+  expect(doc.querySelector('#acs-desde').value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+});
+
 test('acuses stays out of pages it cannot work on', async () => {
   const win = await boot('https://siretrac.cne.gob.mx/Cuenta/Login');
   const ids = tabs(win);
