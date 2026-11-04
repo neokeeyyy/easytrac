@@ -804,7 +804,9 @@
     // shortcut: idVehiculo y TransportePlaca para GuardaCompraGasLP no están verificados con el servidor
     // (la sesión de prueba expiró); confirmarlos con una petición real antes de confiar en el envío.
     if (transfer.vehiculo) {
-      body['compraNueva[compra][idVehiculo]'] = String(transfer.vehiculo.id || '');
+      /* Sin id el servidor resuelve el vehículo por la placa: no se manda el campo vacío. */
+      var vid = String(transfer.vehiculo.id || '').trim();
+      if (vid) body['compraNueva[compra][idVehiculo]'] = vid;
       body['compraNueva[compra][TransportePlaca]'] = String(transfer.vehiculo.placas || '');
     }
     return body;

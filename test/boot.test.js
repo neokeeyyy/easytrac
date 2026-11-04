@@ -77,6 +77,8 @@ test('el panel Ajustes reúne las opciones persistentes', async () => {
 test('el modal de revisión no deja usar el toolkit hasta guardar', async () => {
   const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
   const doc = win.document;
+  /* El aviso se comprueba un tick después de cargar, cuando el loader ya escribió la versión. */
+  await new Promise((r) => setTimeout(r, 10));
   const modal = doc.querySelector('#etcfg-modal');
   expect(modal).toBeTruthy();
   const guardar = modal.querySelector('#etcfg-ok');

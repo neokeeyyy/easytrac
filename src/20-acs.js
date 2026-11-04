@@ -1491,7 +1491,7 @@
       columnas: [
         { clave: 'nombre', etiqueta: 'Nombre', ancho: '28%' },
         { clave: 'placas', etiqueta: 'Placas', ancho: '26%' },
-        { clave: 'id', etiqueta: 'ID', ancho: '10%' }
+        { clave: 'id', etiqueta: 'ID (opcional)', ancho: '10%' }
       ],
       leer: function () { return CONFIG.VEHICULOS; },
       guardar: function (v) { CONFIG.VEHICULOS = v; guardarConfig(); }

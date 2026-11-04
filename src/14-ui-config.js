@@ -57,7 +57,10 @@
   }
 
   function necesitaRevision(guardado, version) {
-    return String(guardado || '') !== String(version || '');
+    /* Los @require se ejecutan antes de que el loader escriba ET.version: con el marcador
+       no se pregunta nada, o el aviso saldría en cada carga. */
+    if (!version || version === '0.0.0-dev') return false;
+    return String(guardado || '') !== String(version);
   }
 
   /* Lista de vehículos: una línea por vehículo, `nombre|placas` o solo `placas`.
@@ -549,7 +552,9 @@
   if (typeof document !== 'undefined' && ET.ready) {
     ET.ready(function () {
       pintar();
-      revisar();
+      /* Un tick después: los @require corren antes del cuerpo del loader, que es quien
+         escribe la versión instalada. Sin esto el modal compara contra 0.0.0-dev y vuelve. */
+      setTimeout(revisar, 0);
     });
   }
 })();

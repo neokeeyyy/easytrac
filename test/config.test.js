@@ -12,7 +12,10 @@ test('necesitaRevision compara la versión guardada con la instalada', () => {
   expect(config.necesitaRevision(undefined, '1.0.15')).toBe(true);
   expect(config.necesitaRevision('1.0.14', '1.0.15')).toBe(true);
   expect(config.necesitaRevision('1.0.15', '1.0.15')).toBe(false);
-  expect(config.necesitaRevision('1.0.15', '')).toBe(true);
+  // Sin versión del loader todavía (marcador), no se pregunta: si no, el modal sale en cada carga.
+  expect(config.necesitaRevision('1.0.15', '')).toBe(false);
+  expect(config.necesitaRevision('1.0.15', '0.0.0-dev')).toBe(false);
+  expect(config.necesitaRevision('', '0.0.0-dev')).toBe(false);
 });
 
 test('marcarVisto escribe cfg_visto con la versión instalada', () => {

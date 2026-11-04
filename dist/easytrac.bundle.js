@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.18'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.19'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -939,7 +939,10 @@
   }
 
   function necesitaRevision(guardado, version) {
-    return String(guardado || '') !== String(version || '');
+    /* Los @require se ejecutan antes de que el loader escriba ET.version: con el marcador
+       no se pregunta nada, o el aviso saldría en cada carga. */
+    if (!version || version === '0.0.0-dev') return false;
+    return String(guardado || '') !== String(version);
   }
 
   /* Lista de vehículos: una línea por vehículo, `nombre|placas` o solo `placas`.
@@ -1431,7 +1434,9 @@
   if (typeof document !== 'undefined' && ET.ready) {
     ET.ready(function () {
       pintar();
-      revisar();
+      /* Un tick después: los @require corren antes del cuerpo del loader, que es quien
+         escribe la versión instalada. Sin esto el modal compara contra 0.0.0-dev y vuelve. */
+      setTimeout(revisar, 0);
     });
   }
 })();
@@ -2930,7 +2935,7 @@
       columnas: [
         { clave: 'nombre', etiqueta: 'Nombre', ancho: '28%' },
         { clave: 'placas', etiqueta: 'Placas', ancho: '26%' },
-        { clave: 'id', etiqueta: 'ID', ancho: '10%' }
+        { clave: 'id', etiqueta: 'ID (opcional)', ancho: '10%' }
       ],
       leer: function () { return CONFIG.VEHICULOS; },
       guardar: function (v) { CONFIG.VEHICULOS = v; guardarConfig(); }
@@ -5841,7 +5846,9 @@
     // shortcut: idVehiculo y TransportePlaca para GuardaCompraGasLP no están verificados con el servidor
     // (la sesión de prueba expiró); confirmarlos con una petición real antes de confiar en el envío.
     if (transfer.vehiculo) {
-      body['compraNueva[compra][idVehiculo]'] = String(transfer.vehiculo.id || '');
+      /* Sin id el servidor resuelve el vehículo por la placa: no se manda el campo vacío. */
+      var vid = String(transfer.vehiculo.id || '').trim();
+      if (vid) body['compraNueva[compra][idVehiculo]'] = vid;
       body['compraNueva[compra][TransportePlaca]'] = String(transfer.vehiculo.placas || '');
     }
     return body;

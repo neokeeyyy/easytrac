@@ -377,6 +377,16 @@ test('buildTraspasoBody agrega idVehiculo y TransportePlaca si el traspaso tiene
   assert.equal(body['compraNueva[compra][TransportePlaca]'], 'JU47194');
 });
 
+test('buildTraspasoBody omite idVehiculo si el vehiculo no tiene id', function () {
+  const body = api.buildTraspasoBody(
+    { operationDate: '2026-10-28', volumeKg: 2318, vehiculo: { nombre: 'CAMION 1', placas: 'JU47194', id: '' } },
+    '1295',
+    '2026-11-03 22:43:44'
+  );
+  assert.equal(body['compraNueva[compra][idVehiculo]'], undefined);
+  assert.equal(body['compraNueva[compra][TransportePlaca]'], 'JU47194');
+});
+
 test('buildTransfers asigna el vehiculo por defecto y vehiculosFaltantes lo detecta', function () {
   const rows = [
     {
