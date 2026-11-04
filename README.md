@@ -74,11 +74,21 @@ Hace las pruebas, sube la versión en `package.json`, reconstruye, hace commit, 
 `vX.Y.Z` y empuja con `--follow-tags`. Sin tag en GitHub, jsDelivr no resuelve los módulos:
 por eso el tag viaja junto al push.
 
-Primera publicación del repositorio:
+Si jsDelivr responde 404 en un módulo recién publicado, es una caché negativa del borde:
+`https://purge.jsdelivr.net/gh/neokeeyyy/easytrac@vX.Y.Z/src/archivo.js` la limpia.
+
+Instalación:
+
+- **Recomendado**: instala `https://raw.githubusercontent.com/neokeeyyy/easytrac/main/EasyTrac.user.js`
+  (Tampermonkey lo actualiza solo; los módulos vienen de jsDelivr).
+- **Sin CDN**: instala `dist/EasyTrac.standalone.user.js` del repo; lleva todo dentro.
+
+Para clonar y trabajar:
 
 ```powershell
-git remote add origin https://github.com/neokeeyyy/easytrac.git
-git push -u origin main --follow-tags
+git clone https://github.com/neokeeyyy/easytrac.git
+cd easytrac
+bun install
 ```
 
 
