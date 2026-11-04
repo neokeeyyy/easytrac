@@ -5,11 +5,14 @@ import { JSDOM } from 'jsdom';
 
 const MODULES = [
   '01-core.js', '02-store.js', '03-http.js', '04-dates.js', '05-text.js', '06-permisos.js',
-  '10-ui-tokens.js', '11-ui-sidebar.js', '13-ui-grid.js', '20-acs.js', '30-acuses.js',
+  '10-ui-tokens.js', '11-ui-sidebar.js', '12-ui-notice.js', '13-ui-grid.js', '20-acs.js', '30-acuses.js',
   '40-venta.js', '50-fecha.js', '70-traspasos.js',
 ];
 
-const BUNDLE = MODULES.map((m) => readFileSync(new URL('../src/' + m, import.meta.url), 'utf8')).join('\n;\n');
+const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+const BUNDLE = MODULES.map((m) => readFileSync(new URL('../src/' + m, import.meta.url), 'utf8'))
+  .join('\n;\n')
+  .replace("ET.version = '0.0.0-dev';", "ET.version = '" + VERSION + "';");
 
 async function boot(url, body, code) {
   const dom = new JSDOM('<!doctype html><html><head></head><body>' + (body || '') + '</body></html>', {
@@ -30,7 +33,7 @@ const tabs = (win) => Array.from(win.document.querySelectorAll('.shub-tab')).map
 test('boots on a GasLP page with the shared sidebar', async () => {
   const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
   expect(win.EasyTrac).toBeTruthy();
-  expect(win.EasyTrac.version).toBe('1.0.0');
+  expect(win.EasyTrac.version).toBe(VERSION);
   const ids = tabs(win);
   expect(ids).toContain('acs');
   expect(ids).toContain('acuses');
@@ -100,8 +103,8 @@ test('el standalone instalable arranca igual que los módulos', async () => {
 test('el loader apunta a un módulo por archivo y no pide grants', () => {
   const head = readFileSync(new URL('../EasyTrac.user.js', import.meta.url), 'utf8');
   const requires = head.split('\n').filter((l) => l.startsWith('// @require'));
-  expect(requires.length).toBe(17); /* 3 librerías + 14 módulos */
-  expect(requires.filter((l) => l.includes('/src/')).length).toBe(14);
+  expect(requires.length).toBe(18); /* 3 librerías + 15 módulos */
+  expect(requires.filter((l) => l.includes('/src/')).length).toBe(15);
   expect(head).toContain('// @grant        none');
   expect(head).toContain('@match        https://siretrac.cne.gob.mx/*');
 });

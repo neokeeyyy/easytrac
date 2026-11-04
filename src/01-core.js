@@ -4,9 +4,8 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  // TODO: point this at the real repository before publishing to GitHub.
-  ET.base = 'https://cdn.jsdelivr.net/gh/OWNER/easytrac@main/src/';
-  ET.version = '1.0.0';
+  ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
+  ET.version = '0.0.0-dev'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
