@@ -3,7 +3,7 @@
    pinned jsDelivr tag, so an update never serves stale modules from the CDN cache. */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 
-const OWNER = 'OWNER'; // TODO: replace with the GitHub account before publishing
+const OWNER = 'neokeeyyy';
 const REPO = 'easytrac';
 const BRANCH = 'main';
 const VERSION = JSON.parse(readFileSync('package.json', 'utf8')).version;

@@ -9,8 +9,8 @@
 // @grant        none
 // @run-at       document-idle
 // @noframes
-// @updateURL    https://raw.githubusercontent.com/OWNER/easytrac/main/EasyTrac.user.js
-// @downloadURL  https://raw.githubusercontent.com/OWNER/easytrac/main/EasyTrac.user.js
+// @updateURL    https://raw.githubusercontent.com/neokeeyyy/easytrac/main/EasyTrac.user.js
+// @downloadURL  https://raw.githubusercontent.com/neokeeyyy/easytrac/main/EasyTrac.user.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // @require      https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js

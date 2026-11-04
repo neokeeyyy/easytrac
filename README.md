@@ -16,9 +16,9 @@ Cada pestaña sólo aparece en las páginas donde su script funcionaba. Los orig
 
 1. Tampermonkey (o Violentmonkey) en el navegador.
 2. Instala **`EasyTrac.user.js`**. Ese archivo sólo tiene la cabecera y 14 `@require`.
-3. Antes de publicar, cambia `OWNER` en `tools/build.mjs` y vuelve a ejecutar `bun tools/build.mjs`: es la única línea que apunta a GitHub.
+3. El repositorio es `neokeeyyy/easytrac`; si cambia de cuenta, `OWNER` en `tools/build.mjs` es la única línea que apunta a GitHub.
 
-Sin repositorio todavía, usa **`dist/EasyTrac.standalone.user.js`**: la misma cabecera con todo el código dentro, para probar hoy sin publicar nada.
+Sin ganas de depender de la CDN, usa **`dist/EasyTrac.standalone.user.js`**: la misma cabecera con todo el código dentro.
 
 ## Estructura
 
@@ -77,7 +77,7 @@ por eso el tag viaja junto al push.
 Primera publicación del repositorio:
 
 ```powershell
-git remote add origin https://github.com/OWNER/easytrac.git
+git remote add origin https://github.com/neokeeyyy/easytrac.git
 git push -u origin main --follow-tags
 ```
 
@@ -92,6 +92,5 @@ git push -u origin main --follow-tags
 
 ## Pendiente
 
-- Publicar en GitHub y sustituir `OWNER` (`tools/build.mjs`).
 - Fusionar los dos escáneres de permisos con pruebas sobre HTML real.
 - Pruebas de ACS (filtros por estatus y cuerpos de petición).
