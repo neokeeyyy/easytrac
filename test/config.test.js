@@ -90,3 +90,37 @@ test('parseVehiculos devuelve lista vacía sin texto', () => {
   expect(globalThis.EasyTrac.config.parseVehiculos(null)).toEqual([]);
   expect(globalThis.EasyTrac.config.parseVehiculos('\n | \n')).toEqual([]);
 });
+
+test('vehiculos acepta el array nuevo, el texto legado y recupera lo guardado', () => {
+  const ET = globalThis.EasyTrac;
+  let guardado = [
+    { nombre: 'A002252', placas: 'JU47194', id: '77' },
+    { nombre: '', placas: 'MX12345', id: '' },
+    { nombre: 'Duplicado', placas: 'ju47194', id: '' },
+    { nombre: 'Sin placas', placas: '  ', id: '5' },
+  ];
+  ET.config.add({
+    seccion: 'Prueba',
+    clave: 'acs.vehiculos',
+    etiqueta: 'Vehículos',
+    tipo: 'lista',
+    defecto: '',
+    leer: () => guardado,
+    guardar: (v) => { guardado = v; },
+  });
+  expect(ET.config.vehiculos()).toEqual([
+    { nombre: 'A002252', placas: 'JU47194', id: '77' },
+    { nombre: '', placas: 'MX12345', id: '' },
+  ]);
+
+  guardado = 'A002252|JU47194|77\nMX12345';
+  expect(ET.config.vehiculos()).toEqual([
+    { nombre: 'A002252', placas: 'JU47194', id: '77' },
+    { nombre: '', placas: 'MX12345', id: '' },
+  ]);
+
+  const lista = [{ nombre: 'A003', placas: 'MX999', id: '9' }];
+  ET.config.set('acs.vehiculos', lista);
+  expect(guardado).toEqual(lista);
+  expect(ET.config.vehiculos()).toEqual(lista);
+});

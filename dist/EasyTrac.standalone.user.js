@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.17
+// @version      1.0.18
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -24,7 +24,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.17'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.18'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -908,6 +908,7 @@
   var campos = [];
   var acciones = [];
   var porClave = {};
+  var listas = {};
   var pane = null;
   var modal = null, btnGuardar = null, abierto = false, atajo = null;
 
@@ -977,8 +978,207 @@
     return lista;
   }
 
+  /* Acepta el array nuevo y el texto legado: nada se rompe antes de migrar. */
+  function listaVehiculos(v) {
+    if (typeof v === 'string') return parseVehiculos(v);
+    if (!Array.isArray(v)) return [];
+    var vistos = {};
+    var lista = [];
+    v.forEach(function (it) {
+      if (!it || typeof it !== 'object') return;
+      var nombre = String(it.nombre == null ? '' : it.nombre).trim();
+      var placas = String(it.placas == null ? '' : it.placas).trim();
+      var id = String(it.id == null ? '' : it.id).trim();
+      if (!placas) return;
+      var clave = placas.toUpperCase().replace(/\s+/g, '');
+      if (vistos[clave]) return;
+      vistos[clave] = true;
+      lista.push({ nombre: nombre, placas: placas, id: id });
+    });
+    return lista;
+  }
+
   function vehiculos() {
-    return parseVehiculos(valor('acs.vehiculos', ''));
+    return listaVehiculos(valor('acs.vehiculos', ''));
+  }
+
+  /* ---------- listas (tipo 'lista': tabla con alta, edición y borrado) ---------- */
+
+  function columnasLista(c) {
+    if (c.columnas && c.columnas.length) return c.columnas;
+    return [
+      { clave: 'nombre', etiqueta: 'Nombre', ancho: '28%' },
+      { clave: 'placas', etiqueta: 'Placas', ancho: '26%' },
+      { clave: 'id', etiqueta: 'ID', ancho: '10%' }
+    ];
+  }
+
+  /* El valor guardado es un array; un string es texto legado (migrar lo decide el campo). */
+  function listaActual(c) {
+    var v = leer(c);
+    if (Array.isArray(v)) return v.map(function (it) { return it && typeof it === 'object' ? Object.assign({}, it) : {}; });
+    if (typeof v === 'string') return (c.migrar || parseVehiculos)(v);
+    return [];
+  }
+
+  function guardarLista(c, datos) {
+    set(c.clave, datos);
+  }
+
+  function estadoLista(c) {
+    if (!listas[c.clave]) listas[c.clave] = { datos: listaActual(c), editando: null, confirmar: -1 };
+    return listas[c.clave];
+  }
+
+  function accionesFilaHtml(c, i, st) {
+    var clave = esc(c.clave);
+    var fila = i + 1;
+    if (st.confirmar === i) {
+      return '<span class="etcfg-confirmar" role="group" aria-label="Confirmar borrado de la fila ' + fila + '">' +
+        '<button type="button" class="etcfg-boton etcfg-peligro" data-lista-si="' + clave + '" data-fila="' + i +
+        '" aria-label="Sí, eliminar la fila ' + fila + '">Sí</button>' +
+        '<button type="button" class="etcfg-boton" data-lista-no="' + clave + '" data-fila="' + i +
+        '" aria-label="No eliminar la fila ' + fila + '">No</button></span>';
+    }
+    return '<button type="button" class="etcfg-boton" data-lista-editar="' + clave + '" data-fila="' + i +
+      '" aria-label="Editar la fila ' + fila + '">Editar</button>' +
+      '<button type="button" class="etcfg-boton etcfg-peligro" data-lista-borrar="' + clave + '" data-fila="' + i +
+      '" aria-label="Eliminar la fila ' + fila + '">Eliminar</button>';
+  }
+
+  function tablaListaHtml(c) {
+    var cols = columnasLista(c);
+    var st = estadoLista(c);
+    var id = 'cfg-' + c.clave.replace(/[^a-z0-9]+/gi, '-');
+    var html = '<table class="etcfg-tabla" aria-labelledby="' + id + '-lbl"><thead><tr>';
+    cols.forEach(function (col) {
+      html += '<th scope="col"' + (col.ancho ? ' style="width:' + esc(col.ancho) + '"' : '') + '>' +
+        esc(col.etiqueta || col.clave) + '</th>';
+    });
+    html += '<th scope="col" class="etcfg-col-acc">Acciones</th></tr></thead><tbody>';
+    if (!st.datos.length) {
+      html += '<tr><td class="etcfg-vacio" colspan="' + (cols.length + 1) + '">Sin filas. Usa «Añadir».</td></tr>';
+    }
+    st.datos.forEach(function (fila, i) {
+      html += '<tr data-fila="' + i + '">';
+      cols.forEach(function (col, j) {
+        var val = fila[col.clave] == null ? '' : String(fila[col.clave]);
+        var etiqueta = (col.etiqueta || col.clave) + ', fila ' + (i + 1);
+        if (st.editando && st.editando.f === i && st.editando.c === j) {
+          html += '<td><input type="text" class="etcfg-celda-input" data-lista-input="' + esc(c.clave) +
+            '" data-fila="' + i + '" data-col="' + j + '" aria-label="' + esc(etiqueta) +
+            '" value="' + esc(val) + '"></td>';
+        } else {
+          html += '<td tabindex="0" data-celda="' + esc(c.clave) + '" data-fila="' + i + '" data-col="' + j +
+            '" aria-label="' + esc(etiqueta + ': ' + (val || 'vacío')) + '">' +
+            (val ? esc(val) : '<span class="etcfg-mudo">—</span>') + '</td>';
+        }
+      });
+      html += '<td class="etcfg-col-acc">' + accionesFilaHtml(c, i, st) + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+  }
+
+  function listaHtml(c) {
+    var id = 'cfg-' + c.clave.replace(/[^a-z0-9]+/gi, '-');
+    return '<span class="etcfg-lista-titulo" id="' + id + '-lbl">' + esc(c.etiqueta) + '</span>' +
+      '<div class="etcfg-lista-caja" data-lista="' + esc(c.clave) + '">' +
+      tablaListaHtml(c) +
+      '<div class="etcfg-lista-pie"><button type="button" class="etcfg-boton" data-lista-add="' + esc(c.clave) +
+      '" aria-label="Añadir fila a ' + esc(c.etiqueta) + '">Añadir</button></div></div>';
+  }
+
+  /* Rehace la tabla de una lista y lleva el foco al control que toca. */
+  function refrescarLista(c, foco) {
+    if (!pane) return;
+    var caja = pane.querySelector('[data-lista="' + c.clave + '"]');
+    if (!caja) return;
+    caja.innerHTML = tablaListaHtml(c) +
+      '<div class="etcfg-lista-pie"><button type="button" class="etcfg-boton" data-lista-add="' + esc(c.clave) +
+      '" aria-label="Añadir fila a ' + esc(c.etiqueta) + '">Añadir</button></div>';
+    var el = caja.querySelector(foco || '[data-lista-add]');
+    if (el) el.focus();
+  }
+
+  function enfocarCelda(c, f, j) {
+    if (!pane) return;
+    var caja = pane.querySelector('[data-lista="' + c.clave + '"]');
+    if (!caja) return;
+    var el = caja.querySelector('td[data-celda][data-fila="' + f + '"][data-col="' + j + '"]');
+    if (el) el.focus();
+  }
+
+  /* Confirmar o cancelar una celda en edición; el borrado nunca ocurre aquí. */
+  function terminarCelda(inp, guardar) {
+    if (!inp || inp.getAttribute('data-hecho')) return;
+    inp.setAttribute('data-hecho', '1');
+    var c = porClave[inp.getAttribute('data-lista-input')];
+    var st = c && listas[c.clave];
+    if (!c || !st || !st.editando) return;
+    var cols = columnasLista(c);
+    var f = st.editando.f, j = st.editando.c;
+    if (guardar) {
+      if (!st.datos[f]) st.datos[f] = {};
+      st.datos[f][cols[j].clave] = inp.value;
+    }
+    st.editando = null;
+    /* Una fila que se queda entera en blanco no se guarda. */
+    var vacia = !st.datos[f] || cols.every(function (col) {
+      var v = st.datos[f][col.clave];
+      return !String(v == null ? '' : v).trim();
+    });
+    if (vacia) {
+      st.datos.splice(f, 1);
+      guardarLista(c, st.datos);
+      refrescarLista(c, st.datos.length ? focoCelda(Math.min(f, st.datos.length - 1), j) : null);
+      return;
+    }
+    if (guardar) guardarLista(c, st.datos);
+    refrescarLista(c, focoCelda(f, j));
+  }
+
+  function focoCelda(f, j) {
+    return 'td[data-celda][data-fila="' + f + '"][data-col="' + j + '"]';
+  }
+
+  function editarCelda(celda) {
+    var c = porClave[celda.getAttribute('data-celda')];
+    var st = c && estadoLista(c);
+    if (!c || !st) return;
+    st.editando = { f: +celda.getAttribute('data-fila'), c: +celda.getAttribute('data-col') };
+    st.confirmar = -1;
+    refrescarLista(c, '[data-lista-input]');
+  }
+
+  function manejarLista(el) {
+    var clave = el.getAttribute('data-lista-add') || el.getAttribute('data-lista-editar') ||
+      el.getAttribute('data-lista-borrar') || el.getAttribute('data-lista-si') || el.getAttribute('data-lista-no');
+    var c = porClave[clave];
+    if (!c) return;
+    var st = estadoLista(c);
+    var f = +el.getAttribute('data-fila');
+    if (el.hasAttribute('data-lista-add')) {
+      st.datos.push({});
+      st.editando = { f: st.datos.length - 1, c: 0 };
+      st.confirmar = -1;
+      refrescarLista(c, '[data-lista-input]');
+    } else if (el.hasAttribute('data-lista-editar')) {
+      st.editando = { f: f, c: 0 };
+      st.confirmar = -1;
+      refrescarLista(c, '[data-lista-input]');
+    } else if (el.hasAttribute('data-lista-borrar')) {
+      st.editando = null;
+      st.confirmar = f;
+      refrescarLista(c, '[data-lista-no][data-fila="' + f + '"]');
+    } else if (el.hasAttribute('data-lista-si')) {
+      st.datos.splice(f, 1);
+      st.confirmar = -1;
+      guardarLista(c, st.datos);
+      refrescarLista(c, st.datos.length ? focoCelda(Math.min(f, st.datos.length - 1), 0) : null);
+    } else {
+      st.confirmar = -1;
+      refrescarLista(c, '[data-lista-borrar][data-fila="' + f + '"]');
+    }
   }
 
   function marcarVisto(version) {
@@ -1008,6 +1208,8 @@
     } else if (c.tipo === 'textarea') {
       html += '<label for="' + id + '">' + esc(c.etiqueta) + '</label>' +
         '<textarea' + attrs + ' rows="4">' + esc(v) + '</textarea>';
+    } else if (c.tipo === 'lista') {
+      html += listaHtml(c);
     } else {
       var tipo = c.tipo === 'number' ? 'number' : 'text';
       html += '<label for="' + id + '">' + esc(c.etiqueta) + '</label>' +
@@ -1019,6 +1221,7 @@
 
   function pintarCampos() {
     if (!pane) return;
+    listas = {};
     var secciones = [], porSeccion = {};
     function grupo(nombre) {
       if (!porSeccion[nombre]) { porSeccion[nombre] = { campos: [], acciones: [] }; secciones.push(nombre); }
@@ -1051,10 +1254,44 @@
       set(clave, el.type === 'checkbox' ? el.checked : el.value);
     });
     p.addEventListener('click', function (ev) {
-      var b = ev.target && ev.target.closest ? ev.target.closest('[data-accion]') : null;
+      var t = ev.target && ev.target.closest ? ev.target : null;
+      var lista = t ? t.closest('[data-lista-add],[data-lista-editar],[data-lista-borrar],[data-lista-si],[data-lista-no]') : null;
+      if (lista) { manejarLista(lista); return; }
+      var celda = t ? t.closest('td[data-celda]') : null;
+      if (celda) { editarCelda(celda); return; }
+      var b = t ? t.closest('[data-accion]') : null;
       if (!b) return;
       var a = acciones[+b.getAttribute('data-accion')];
       if (a && a.alPulsar) a.alPulsar();
+    });
+    p.addEventListener('keydown', function (ev) {
+      var t = ev.target;
+      if (!t || !t.getAttribute) return;
+      var inp = t.closest ? t.closest('[data-lista-input]') : null;
+      if (inp) {
+        if (ev.key === 'Enter') { ev.preventDefault(); terminarCelda(inp, true); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); terminarCelda(inp, false); }
+        return;
+      }
+      var celda = t.closest ? t.closest('td[data-celda]') : null;
+      if (!celda) return;
+      var c = porClave[celda.getAttribute('data-celda')];
+      if (!c) return;
+      var st = estadoLista(c);
+      var f = +celda.getAttribute('data-fila'), j = +celda.getAttribute('data-col');
+      var nf = f, nj = j;
+      if (ev.key === 'ArrowDown') nf = f + 1;
+      else if (ev.key === 'ArrowUp') nf = f - 1;
+      else if (ev.key === 'ArrowRight') nj = j + 1;
+      else if (ev.key === 'ArrowLeft') nj = j - 1;
+      else if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); editarCelda(celda); return; }
+      else if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); return; }
+      else return;
+      ev.preventDefault();
+      var cols = columnasLista(c).length;
+      if (nj >= cols) { nj = 0; nf = f + 1; }
+      if (nj < 0) { nj = cols - 1; nf = f - 1; }
+      if (nf >= 0 && nf < st.datos.length) enfocarCelda(c, nf, nj);
     });
     return p;
   }
@@ -1143,6 +1380,25 @@
     '#etcfg-pane input[type=text],#etcfg-pane input[type=number],#etcfg-pane select,#etcfg-pane textarea{width:100%;min-width:0;max-width:100%;padding:6px 7px;' +
     'border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;}' +
     '#etcfg-pane textarea{resize:vertical;min-height:72px;grid-column:1 / -1;}' +
+    '#etcfg-pane .etcfg-lista{grid-template-columns:minmax(0,1fr);}' +
+    '#etcfg-pane .etcfg-lista-titulo{font-size:13px;}' +
+    '#etcfg-pane .etcfg-lista-caja{min-width:0;max-width:100%;overflow-x:auto;}' +
+    '#etcfg-pane .etcfg-tabla{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;}' +
+    '#etcfg-pane .etcfg-tabla th,#etcfg-pane .etcfg-tabla td{padding:5px 6px;border:1px solid var(--ui-border);' +
+    'text-align:left;vertical-align:middle;overflow-wrap:anywhere;}' +
+    '#etcfg-pane .etcfg-tabla th{font-weight:400;color:var(--ui-muted);background:var(--ui-border);}' +
+    '#etcfg-pane .etcfg-tabla td[data-celda]{cursor:text;}' +
+    '#etcfg-pane .etcfg-tabla td[data-celda]:focus{outline:2px solid var(--ui-focus);outline-offset:-2px;}' +
+    '#etcfg-pane .etcfg-tabla .etcfg-col-acc{width:150px;}' +
+    '#etcfg-pane .etcfg-tabla .etcfg-boton{padding:4px 6px;margin:0 3px 3px 0;font-size:12px;}' +
+    '#etcfg-pane .etcfg-peligro{color:var(--ui-danger);border-color:var(--ui-danger);}' +
+    '#etcfg-pane .etcfg-peligro:hover{background:var(--ui-err-bg);}' +
+    '#etcfg-pane .etcfg-confirmar{display:inline-flex;flex-wrap:wrap;gap:3px;}' +
+    '#etcfg-pane .etcfg-mudo{color:var(--ui-muted);}' +
+    '#etcfg-pane .etcfg-vacio{text-align:center;color:var(--ui-muted);}' +
+    '#etcfg-pane .etcfg-lista-pie{margin-top:6px;}' +
+    '#etcfg-pane .etcfg-celda-input{width:100%;min-width:0;padding:4px 5px;border:1px solid var(--ui-focus);' +
+    'background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;}' +
     '#etcfg-pane input[type=checkbox]{width:16px;height:16px;flex:0 0 auto;margin:0;accent-color:var(--ui-primary);}' +
     '#etcfg-pane .etcfg-boton{font:400 13px/1 var(--ui-font);padding:8px 11px;border:1px solid var(--ui-border-input);' +
     'background:var(--ui-bg);color:var(--ui-fg);border-radius:0;cursor:pointer;transition:background 120ms linear,transform 140ms var(--shub-spring);}' +
@@ -1229,7 +1485,6 @@
     RECORRER_PERMISOS: true,    // recorre todos los permisos de la sesión (si los descubre)
     PERMISOS: [],               // [] = descubrir del sitio; o forzar: [id, id, ...]
     PERMISO_FILTRO: '',         // permiso vendedor específico; vacío = todos
-    MOTIVO_CIERRE: '',           // motivo de cierre (>=5 caracteres) si la compra lo exige (Cerrar manual)
     INCLUIR_NO_CERRADAS_FACT: false, // Facturas: incluir compras de cualquier estatus, no solo cerradas
     VERBOSE: true                // diagnóstico detallado en consola y estado del panel
   };
@@ -1376,7 +1631,7 @@
     if (!summary) return;
     var rows = document.querySelectorAll('#acs-tabla tbody tr').length;
     var selected = document.querySelectorAll('#acs-tabla tbody input[type="checkbox"]:checked').length;
-    summary.textContent = rows + ' visibles · ' + selected + ' seleccionadas';
+    summary.textContent = rows + ' visibles · ' + selected + ' de ' + rows + ' seleccionadas';
   }
 
   /* ============ ACUSES ============ */
@@ -1544,9 +1799,9 @@
         var idCompra = matchInput(h, 'id-compra') || c.idCompra;
         var codigo = mco ? mco[1] : (c.codigo || '');
         var mostrarMotivo = matchInput(h, 'mostrar-motivo-cierre') === '1';
-        var motivo = mostrarMotivo ? (CONFIG.MOTIVO_CIERRE || '') : '';
-        if (mostrarMotivo && String(motivo).trim().length < 5) {
-          throw new Error('requiere motivo de cierre (>=5 caracteres) en configuración');
+        var motivo = mostrarMotivo ? String(c.motivo || '') : '';
+        if (mostrarMotivo && motivo.trim().length < 5) {
+          throw new Error('motivo de cierre: escribe al menos 5 caracteres en la fila');
         }
         var volCierre = matchInput(h, 'idVolumenCierre') || '';
         var body = cuerpoCerrarCompra({
@@ -2001,18 +2256,30 @@
 
   /* ============ MÓDULO: FACTURAS DE TRASPASO ============ */
   var facturasCandidatas = [];
+  var ESTADO_FACTURA = {
+    pendiente: 'Traspaso pendiente',
+    'sin-nodo': 'Sin traspaso pendiente',
+    abierta: 'Abierta'
+  };
 
   function listarNodosFacturasTraspaso() {
     return getJsonDatos('/GasLP/Facturas/GetNodosDespachosSinFactura?traspaso=true');
+  }
+
+  /* Estado de una compra en la lista de facturas; `referencia` es el nodo de factura o null. */
+  function clasificarFactura(compra, referencia) {
+    var cerrada = Number(compra && compra.idEstatus) === 2 || String(compra && compra.fechaCierre || '').trim() !== '';
+    if (!cerrada) return 'abierta';
+    return referencia ? 'pendiente' : 'sin-nodo';
   }
 
   function agregarFacturaCandidata(compra, permiso, referencia) {
     for (var i = 0; i < facturasCandidatas.length; i++) {
       if (String(facturasCandidatas[i].compra.idCompra) === String(compra.idCompra)) return i;
     }
-    facturasCandidatas.push({ compra: compra, permisoUrl: permiso ? permiso.url : null, referencia: referencia });
+    facturasCandidatas.push({ compra: compra, permisoUrl: permiso ? permiso.url : null, referencia: referencia || null });
     var idx = facturasCandidatas.length - 1;
-    filaCompra(compra, idx, 'acs-factura-check');
+    filaCompra(compra, idx, 'acs-factura-check', { estado: ESTADO_FACTURA[clasificarFactura(compra, referencia)] });
     return idx;
   }
 
@@ -2040,11 +2307,13 @@
       return fetch('/GasLP/Facturas/Index', { credentials: 'same-origin' })
         .then(listarNodosFacturasTraspaso)
         .then(function (nodos) {
+          var pendientes = 0;
           cand.forEach(function (c) {
             var ref = buscarNodoFactura(c, nodos);
-            if (ref) agregarFacturaCandidata(c, permiso, ref);
+            agregarFacturaCandidata(c, permiso, ref);
+            if (ref) pendientes++;
           });
-          progRender('Facturas: ' + facturasCandidatas.length + ' traspaso(s) pendiente(s).');
+          progRender('Facturas: ' + cand.length + ' compra(s) en rango, ' + pendientes + ' con traspaso pendiente.');
         });
     }).catch(function (e) { progRender('ERROR: ' + e.message); });
   }
@@ -2057,6 +2326,7 @@
     var ok = 0;
     function moduloDescarga(permiso) {
       return comprasCerradas().then(function (cand) {
+        cand = cand.filter(function (c) { return clasificarFactura(c, null) !== 'abierta'; });
         progAdd(cand.length);
         return secuencia(cand, function (c) {
           var idx = agregarFacturaCandidata(c, permiso);
@@ -2082,6 +2352,10 @@
     return secuencia(checks, function (ch) {
       var item = facturasCandidatas[+ch.dataset.idx];
       if (!item) { progStep('Registro no disponible'); return; }
+      if (!item.referencia) {
+        progStep('Omitida · sin traspaso pendiente · ' + item.compra.codigoRegistro);
+        return;
+      }
       progRender('Subiendo ' + item.compra.codigoRegistro + '...');
       return (item.permisoUrl ? cambiarPermiso({ url: item.permisoUrl }) : Promise.resolve())
         .then(function () { return subirFormatoTraspaso(item.compra); })
@@ -2110,12 +2384,20 @@
   function agregarCandidato(c, permiso) {
     if (candidatos.some(function (x) { return x.idCompra === c.idCompra; })) return;
     candidatos.push({ compra: c, idCompra: c.idCompra, permisoUrl: permiso ? permiso.url : null });
-    filaCompra(c, candidatos.length - 1, 'acs-cand-check');
+    filaCompra(c, candidatos.length - 1, 'acs-cand-check', { motivo: true });
   }
 
-  function cerrarConFormato(c) {
-    return cerrarCompraManual({ idCompra: c.idCompra, codigo: c.codigoRegistro }).then(function (r) {
-      if (!r.ok) { progStep('FALLO ' + r.msg + ' · ' + c.codigoRegistro); return false; }
+  function marcarFilaCierre(tr, msg) {
+    if (!tr) return;
+    tr.classList.toggle('acs-fail', !!msg);
+    var el = tr.querySelector('.acs-motivo-msg');
+    if (el) el.textContent = msg || '';
+  }
+
+  function cerrarConFormato(c, motivo, tr) {
+    return cerrarCompraManual({ idCompra: c.idCompra, codigo: c.codigoRegistro, motivo: motivo || '' }).then(function (r) {
+      if (!r.ok) { marcarFilaCierre(tr, r.msg); progStep('FALLO ' + r.msg + ' · ' + c.codigoRegistro); return false; }
+      marcarFilaCierre(tr, '');
       try { descargarFormato(c); } catch (e) {}
       return subirFormatoTraspaso(c).then(function () {
         progStep('Cerrada + PDF + traspaso subido · ' + c.codigoRegistro);
@@ -2124,7 +2406,7 @@
         progStep('Cerrada + PDF; traspaso pendiente · ' + c.codigoRegistro);
         return true;
       });
-    }).catch(function (e) { progStep('ERROR · ' + c.codigoRegistro + ' · ' + e.message); return false; });
+    }).catch(function (e) { marcarFilaCierre(tr, e.message); progStep('ERROR · ' + c.codigoRegistro + ' · ' + e.message); return false; });
   }
 
   function cerrarTodas() {
@@ -2146,25 +2428,45 @@
     if (!checks.length) { progRender('Selecciona compras para cerrar.'); return Promise.resolve(); }
     progReset();
     progAdd(checks.length);
-    var items = checks.map(function (ch) { return candidatos[+ch.dataset.idx]; }).filter(function (c) { return c && c.idCompra; });
-    return secuencia(items, function (c) {
-      return (c.permisoUrl ? cambiarPermiso({ url: c.permisoUrl }) : Promise.resolve()).then(function () { return cerrarConFormato(c.compra); });
+    var items = checks.map(function (ch) {
+      var idx = +ch.dataset.idx;
+      var input = document.querySelector('.acs-motivo[data-idx="' + idx + '"]');
+      return { c: candidatos[idx], motivo: input ? input.value : '', tr: ch.closest('tr') };
+    }).filter(function (it) { return it.c && it.c.idCompra; });
+    return secuencia(items, function (it) {
+      return (it.c.permisoUrl ? cambiarPermiso({ url: it.c.permisoUrl }) : Promise.resolve())
+        .then(function () { return cerrarConFormato(it.c.compra, it.motivo, it.tr); });
     });
   }
 
   /* ============ TABLA ============ */
-  function filaCompra(c, idx, clase) {
+  function filaCompra(c, idx, clase, opts) {
+    opts = opts || {};
     var estatusTxt = c.estatus || (Number(c.idEstatus) === 1 ? 'Aceptada' : Number(c.idEstatus) === 0 ? 'Solicitada' : String(c.idEstatus));
     var tr = document.createElement('tr');
+    tr.tabIndex = 0;
+    tr.setAttribute('aria-selected', 'true');
     tr.innerHTML = '<td><input type="checkbox" checked class="' + clase + '" data-idx="' + idx + '"></td>' +
       '<td>' + c.codigoRegistro + '</td>' +
       '<td>' + estatusTxt + '</td>' +
       '<td>' + (c.volumen_Solicitado || '?') + ' / ' + (c.volumen_Entregado || '?') + '</td>' +
       '<td>' + (c.fechaCompra || '') + '</td>' +
-      '<td>' + (c.permiso_Vendedor || '') + '</td>';
+      '<td>' + (c.permiso_Vendedor || '') + '</td>' +
+      (opts.motivo ? '<td><input type="text" class="acs-motivo" data-idx="' + idx + '" aria-label="Motivo de cierre" placeholder="Mínimo 5 caracteres"><span class="acs-motivo-msg" role="alert"></span></td>' : '') +
+      (opts.estado ? '<td class="acs-fact-estado">' + opts.estado + '</td>' : '');
     document.querySelector('#acs-tabla tbody').appendChild(tr);
     actualizarResumen();
     return tr;
+  }
+
+  /* Fila a la que salta el teclado; -1 = tecla no manejada. */
+  function filaDestino(idx, total, tecla) {
+    if (!total || idx < 0) return -1;
+    if (tecla === 'ArrowDown') return Math.min(idx + 1, total - 1);
+    if (tecla === 'ArrowUp') return Math.max(idx - 1, 0);
+    if (tecla === 'Home') return 0;
+    if (tecla === 'End') return total - 1;
+    return -1;
   }
 
   /* Código visible del permiso (LP/…); el id interno solo como respaldo. */
@@ -2319,6 +2621,7 @@
       '  <div class="acs-pane" id="acs-pane-cerrar" style="display:none">Lista compras <b>Aceptadas</b> sin cerrar. Selecciona y usa <b>Cerrar seleccionadas</b>.</div>' +
       '  <div class="acs-pane" id="acs-pane-facturas" style="display:none"><div>Sube formatos de traspaso de compras cerradas sin factura y descarga los formatos PDF de las compras cerradas dentro del rango.</div></div>' +
       '  <div id="acs-facturas-acciones" style="display:none">' +
+      '    <label class="acs-opt" title="Lista también compras abiertas dentro del rango"><input type="checkbox" id="acs-fact-no-cerradas" ' + (CONFIG.INCLUIR_NO_CERRADAS_FACT ? 'checked' : '') + '> Incluir compras no cerradas</label>' +
       '    <button id="acs-refrescar-facturas" class="acs-btn"><i class="fa-solid fa-rotate"></i> Actualizar</button>' +
       '    <button id="acs-subir-facturas" class="acs-btn"><i class="fa-solid fa-cloud-arrow-up"></i> Subir</button>' +
       '    <button id="acs-descargar-formatos" class="acs-btn"><i class="fa-solid fa-file-arrow-down"></i> Descargar PDFs</button>' +
@@ -2333,7 +2636,7 @@
       '  </div>' +
       '  <div id="acs-status" role="status" aria-live="polite">Listo.</div>' +
       '  <div id="acs-prog"><div id="acs-bar-fill"></div><span id="acs-prog-text">0 / 0</span></div>' +
-      '  <div id="acs-summary">0 visibles · 0 seleccionadas</div>' +
+      '  <div id="acs-summary">0 visibles · 0 de 0 seleccionadas</div>' +
       '  <div id="acs-tabla-wrap"><table id="acs-tabla"><thead id="acs-thead"></thead><tbody></tbody></table></div>' +
       '</div>';
     var hubPane = ET.ui.tab('acs', 'ACS', 10, 470);
@@ -2379,8 +2682,9 @@
         ejecutar.innerHTML = cfg[0];
         ejecutar.className = cfg[1] ? 'acs-btn acs-btn-principal' : 'acs-btn';
       }
+      var extra = tab === 'facturas' ? '<th>Factura</th>' : tab === 'cerrar' ? '<th>Motivo de cierre</th>' : '';
       panel.querySelector('#acs-thead').innerHTML = (tab === 'inicio' || tab === 'cerrar' || tab === 'facturas')
-        ? '<tr><th></th><th>Registro</th><th>Estatus</th><th>Volumen</th><th>Fecha</th><th>Permiso</th></tr>'
+        ? '<tr><th></th><th>Registro</th><th>Estatus</th><th>Volumen</th><th>Fecha</th><th>Permiso</th>' + extra + '</tr>'
         : '<tr><th>Módulo</th><th>Permiso</th><th>Registro</th><th>Estado</th><th>Detalle</th></tr>';
       panel.querySelector('#acs-acciones').style.display = tab === 'facturas' ? 'none' : 'grid';
       panel.querySelector('#acs-facturas-acciones').style.display = tab === 'facturas' ? 'flex' : 'none';
@@ -2415,7 +2719,14 @@
     });
     panel.querySelector('#acs-refrescar-facturas').addEventListener('click', function () {
       escanearFacturas().then(function () {
-        if (!STOP) progRender(facturasCandidatas.length + ' traspaso(s) pendiente(s).');
+        if (!STOP) progRender(facturasCandidatas.length + ' compra(s) en la lista de facturas.');
+      });
+    });
+    panel.querySelector('#acs-fact-no-cerradas').addEventListener('change', function () {
+      CONFIG.INCLUIR_NO_CERRADAS_FACT = this.checked;
+      guardarConfig();
+      escanearFacturas().then(function () {
+        if (!STOP) progRender(facturasCandidatas.length + ' compra(s) en la lista de facturas.');
       });
     });
     panel.querySelector('#acs-subir-facturas').addEventListener('click', function () {
@@ -2427,7 +2738,38 @@
       descargarFormatosRango();
     });
     panel.querySelector('#acs-detener-facturas').addEventListener('click', detener);
-    panel.querySelector('#acs-tabla tbody').addEventListener('change', actualizarResumen);
+    var tbody = panel.querySelector('#acs-tabla tbody');
+    function filasConCheckbox() {
+      return Array.prototype.slice.call(tbody.querySelectorAll('tr')).filter(function (tr) {
+        return tr.querySelector('input[type="checkbox"]');
+      });
+    }
+    tbody.addEventListener('change', function (ev) {
+      var tr = ev.target.closest('tr');
+      if (tr && ev.target.type === 'checkbox') tr.setAttribute('aria-selected', ev.target.checked ? 'true' : 'false');
+      actualizarResumen();
+    });
+    tbody.addEventListener('keydown', function (ev) {
+      var tr = ev.target.closest('tr');
+      if (!tr) return;
+      var filasVisibles = filasConCheckbox();
+      var idx = filasVisibles.indexOf(tr);
+      if (idx === -1) return;
+      if ((ev.key === ' ' || ev.key === 'Spacebar') && ev.target.tagName !== 'INPUT') {
+        ev.preventDefault();
+        var ch = tr.querySelector('input[type="checkbox"]');
+        if (ch && !ch.disabled) {
+          ch.checked = !ch.checked;
+          ch.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return;
+      }
+      if (ev.target.tagName === 'INPUT' && ev.target.type !== 'checkbox') return;
+      var destino = filaDestino(idx, filasVisibles.length, ev.key);
+      if (destino < 0) return;
+      ev.preventDefault();
+      filasVisibles[destino].focus();
+    });
     panel.querySelector('#acs-cerrar-sel').addEventListener('click', function () {
       STOP = false;
       cerrarSeleccionadas().then(function () { progRender('Cierres terminados.'); });
@@ -2511,6 +2853,12 @@
     '#acs-tabla th{background:var(--ui-bg);color:var(--ui-fg);border-bottom:1px solid var(--ui-border-strong);padding:6px;text-align:left;font-weight: 400;position:sticky;top:0;z-index:1;}' +
     '#acs-tabla td{border-bottom:1px solid var(--ui-border);padding:6px;color:var(--ui-fg);overflow-wrap:anywhere;}' +
     '#acs-tabla tbody tr:nth-child(even){background:#f5f5f5;}' +
+    '#acs-tabla tbody tr:focus-visible{outline:2px solid var(--ui-focus);outline-offset:-2px;}' +
+    '.acs-motivo{width:100%;min-width:120px;border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;padding:3px 5px;border-radius:0;}' +
+    '.acs-motivo:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
+    '.acs-motivo-msg{display:block;color:var(--ui-err-fg);font-size:12px;}' +
+    '#acs-facturas-acciones{flex-wrap:wrap;}' +
+    '#acs-facturas-acciones .acs-opt{flex:1 1 100%;}' +
     '#acs-tabla tbody tr.acs-factura-ok{background:var(--ui-ok-bg);}' +
     '.acs-est.ok{color:var(--ui-ok-fg);}' +
     '.acs-est.fail,.acs-fail{color:var(--ui-err-fg);}'
@@ -2533,6 +2881,8 @@
       cuerpoDespacho: cuerpoDespacho,
       cuerpoRecepcion: cuerpoRecepcion,
       nombreArchivoTraspaso: nombreArchivoTraspaso,
+      clasificarFactura: clasificarFactura,
+      filaDestino: filaDestino,
       elegirVehiculo: elegirVehiculo
     };
   }
@@ -2573,12 +2923,9 @@
   /* Ajustes persistentes: mismos valores de acs_cfg, editados desde la pestaña Ajustes. */
   if (ET.config) {
     [
-      ['VEHICULOS', 'Vehículos (uno por línea: nombre|placas)', 'textarea'],
       ['DELAY_MS', 'Espera entre operaciones (ms)', 'number'],
-      ['MOTIVO_CIERRE', 'Motivo de cierre', 'text'],
       ['CERRAR_AL_RECEPCIONAR', 'Cerrar al recepcionar', 'check'],
-      ['VERBOSE', 'Registro detallado', 'check'],
-      ['INCLUIR_NO_CERRADAS_FACT', 'Incluir compras no cerradas (facturas)', 'check']
+      ['VERBOSE', 'Registro detallado', 'check']
     ].forEach(function (f) {
       ET.config.add({
         seccion: 'ACS',
@@ -2589,6 +2936,21 @@
         leer: function () { return CONFIG[f[0]]; },
         guardar: function (v) { CONFIG[f[0]] = v; guardarConfig(); }
       });
+    });
+
+    ET.config.add({
+      seccion: 'ACS',
+      clave: 'acs.vehiculos',
+      etiqueta: 'Vehículos',
+      tipo: 'lista',
+      defecto: DEFAULTS.VEHICULOS,
+      columnas: [
+        { clave: 'nombre', etiqueta: 'Nombre', ancho: '28%' },
+        { clave: 'placas', etiqueta: 'Placas', ancho: '26%' },
+        { clave: 'id', etiqueta: 'ID', ancho: '10%' }
+      ],
+      leer: function () { return CONFIG.VEHICULOS; },
+      guardar: function (v) { CONFIG.VEHICULOS = v; guardarConfig(); }
     });
   }
 

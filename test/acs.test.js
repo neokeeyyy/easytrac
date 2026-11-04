@@ -242,3 +242,24 @@ test('elegirVehiculo usa el de la barra y cae al primero por defecto', () => {
   assert.deepEqual(acs.elegirVehiculo(lista, ''), lista[0]);
   assert.equal(acs.elegirVehiculo([], 'JU47194'), null);
 });
+
+test('clasificarFactura distingue pendiente, sin nodo y abierta', () => {
+  const nodo = { idCompra: '1' };
+  assert.equal(acs.clasificarFactura(compra({ idEstatus: 2 }), nodo), 'pendiente');
+  assert.equal(acs.clasificarFactura(compra({ idEstatus: 2 }), null), 'sin-nodo');
+  assert.equal(acs.clasificarFactura(compra({ idEstatus: 0, fechaCierre: '15/08/2026' }), null), 'sin-nodo');
+  assert.equal(acs.clasificarFactura(compra({ idEstatus: 0, fechaCierre: '' }), nodo), 'abierta');
+  assert.equal(acs.clasificarFactura(compra({ idEstatus: 1 }), null), 'abierta');
+});
+
+test('filaDestino mueve con flechas, Home y End sin salirse de la tabla', () => {
+  assert.equal(acs.filaDestino(1, 4, 'ArrowDown'), 2);
+  assert.equal(acs.filaDestino(3, 4, 'ArrowDown'), 3);
+  assert.equal(acs.filaDestino(1, 4, 'ArrowUp'), 0);
+  assert.equal(acs.filaDestino(0, 4, 'ArrowUp'), 0);
+  assert.equal(acs.filaDestino(2, 4, 'Home'), 0);
+  assert.equal(acs.filaDestino(0, 4, 'End'), 3);
+  assert.equal(acs.filaDestino(-1, 4, 'ArrowDown'), -1);
+  assert.equal(acs.filaDestino(0, 0, 'ArrowDown'), -1);
+  assert.equal(acs.filaDestino(1, 4, 'Enter'), -1);
+});

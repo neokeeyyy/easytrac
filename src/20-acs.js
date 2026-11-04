@@ -29,7 +29,6 @@
     RECORRER_PERMISOS: true,    // recorre todos los permisos de la sesión (si los descubre)
     PERMISOS: [],               // [] = descubrir del sitio; o forzar: [id, id, ...]
     PERMISO_FILTRO: '',         // permiso vendedor específico; vacío = todos
-    MOTIVO_CIERRE: '',           // motivo de cierre (>=5 caracteres) si la compra lo exige (Cerrar manual)
     INCLUIR_NO_CERRADAS_FACT: false, // Facturas: incluir compras de cualquier estatus, no solo cerradas
     VERBOSE: true                // diagnóstico detallado en consola y estado del panel
   };
@@ -176,7 +175,7 @@
     if (!summary) return;
     var rows = document.querySelectorAll('#acs-tabla tbody tr').length;
     var selected = document.querySelectorAll('#acs-tabla tbody input[type="checkbox"]:checked').length;
-    summary.textContent = rows + ' visibles · ' + selected + ' seleccionadas';
+    summary.textContent = rows + ' visibles · ' + selected + ' de ' + rows + ' seleccionadas';
   }
 
   /* ============ ACUSES ============ */
@@ -344,9 +343,9 @@
         var idCompra = matchInput(h, 'id-compra') || c.idCompra;
         var codigo = mco ? mco[1] : (c.codigo || '');
         var mostrarMotivo = matchInput(h, 'mostrar-motivo-cierre') === '1';
-        var motivo = mostrarMotivo ? (CONFIG.MOTIVO_CIERRE || '') : '';
-        if (mostrarMotivo && String(motivo).trim().length < 5) {
-          throw new Error('requiere motivo de cierre (>=5 caracteres) en configuración');
+        var motivo = mostrarMotivo ? String(c.motivo || '') : '';
+        if (mostrarMotivo && motivo.trim().length < 5) {
+          throw new Error('motivo de cierre: escribe al menos 5 caracteres en la fila');
         }
         var volCierre = matchInput(h, 'idVolumenCierre') || '';
         var body = cuerpoCerrarCompra({
@@ -801,18 +800,30 @@
 
   /* ============ MÓDULO: FACTURAS DE TRASPASO ============ */
   var facturasCandidatas = [];
+  var ESTADO_FACTURA = {
+    pendiente: 'Traspaso pendiente',
+    'sin-nodo': 'Sin traspaso pendiente',
+    abierta: 'Abierta'
+  };
 
   function listarNodosFacturasTraspaso() {
     return getJsonDatos('/GasLP/Facturas/GetNodosDespachosSinFactura?traspaso=true');
+  }
+
+  /* Estado de una compra en la lista de facturas; `referencia` es el nodo de factura o null. */
+  function clasificarFactura(compra, referencia) {
+    var cerrada = Number(compra && compra.idEstatus) === 2 || String(compra && compra.fechaCierre || '').trim() !== '';
+    if (!cerrada) return 'abierta';
+    return referencia ? 'pendiente' : 'sin-nodo';
   }
 
   function agregarFacturaCandidata(compra, permiso, referencia) {
     for (var i = 0; i < facturasCandidatas.length; i++) {
       if (String(facturasCandidatas[i].compra.idCompra) === String(compra.idCompra)) return i;
     }
-    facturasCandidatas.push({ compra: compra, permisoUrl: permiso ? permiso.url : null, referencia: referencia });
+    facturasCandidatas.push({ compra: compra, permisoUrl: permiso ? permiso.url : null, referencia: referencia || null });
     var idx = facturasCandidatas.length - 1;
-    filaCompra(compra, idx, 'acs-factura-check');
+    filaCompra(compra, idx, 'acs-factura-check', { estado: ESTADO_FACTURA[clasificarFactura(compra, referencia)] });
     return idx;
   }
 
@@ -840,11 +851,13 @@
       return fetch('/GasLP/Facturas/Index', { credentials: 'same-origin' })
         .then(listarNodosFacturasTraspaso)
         .then(function (nodos) {
+          var pendientes = 0;
           cand.forEach(function (c) {
             var ref = buscarNodoFactura(c, nodos);
-            if (ref) agregarFacturaCandidata(c, permiso, ref);
+            agregarFacturaCandidata(c, permiso, ref);
+            if (ref) pendientes++;
           });
-          progRender('Facturas: ' + facturasCandidatas.length + ' traspaso(s) pendiente(s).');
+          progRender('Facturas: ' + cand.length + ' compra(s) en rango, ' + pendientes + ' con traspaso pendiente.');
         });
     }).catch(function (e) { progRender('ERROR: ' + e.message); });
   }
@@ -857,6 +870,7 @@
     var ok = 0;
     function moduloDescarga(permiso) {
       return comprasCerradas().then(function (cand) {
+        cand = cand.filter(function (c) { return clasificarFactura(c, null) !== 'abierta'; });
         progAdd(cand.length);
         return secuencia(cand, function (c) {
           var idx = agregarFacturaCandidata(c, permiso);
@@ -882,6 +896,10 @@
     return secuencia(checks, function (ch) {
       var item = facturasCandidatas[+ch.dataset.idx];
       if (!item) { progStep('Registro no disponible'); return; }
+      if (!item.referencia) {
+        progStep('Omitida · sin traspaso pendiente · ' + item.compra.codigoRegistro);
+        return;
+      }
       progRender('Subiendo ' + item.compra.codigoRegistro + '...');
       return (item.permisoUrl ? cambiarPermiso({ url: item.permisoUrl }) : Promise.resolve())
         .then(function () { return subirFormatoTraspaso(item.compra); })
@@ -910,12 +928,20 @@
   function agregarCandidato(c, permiso) {
     if (candidatos.some(function (x) { return x.idCompra === c.idCompra; })) return;
     candidatos.push({ compra: c, idCompra: c.idCompra, permisoUrl: permiso ? permiso.url : null });
-    filaCompra(c, candidatos.length - 1, 'acs-cand-check');
+    filaCompra(c, candidatos.length - 1, 'acs-cand-check', { motivo: true });
   }
 
-  function cerrarConFormato(c) {
-    return cerrarCompraManual({ idCompra: c.idCompra, codigo: c.codigoRegistro }).then(function (r) {
-      if (!r.ok) { progStep('FALLO ' + r.msg + ' · ' + c.codigoRegistro); return false; }
+  function marcarFilaCierre(tr, msg) {
+    if (!tr) return;
+    tr.classList.toggle('acs-fail', !!msg);
+    var el = tr.querySelector('.acs-motivo-msg');
+    if (el) el.textContent = msg || '';
+  }
+
+  function cerrarConFormato(c, motivo, tr) {
+    return cerrarCompraManual({ idCompra: c.idCompra, codigo: c.codigoRegistro, motivo: motivo || '' }).then(function (r) {
+      if (!r.ok) { marcarFilaCierre(tr, r.msg); progStep('FALLO ' + r.msg + ' · ' + c.codigoRegistro); return false; }
+      marcarFilaCierre(tr, '');
       try { descargarFormato(c); } catch (e) {}
       return subirFormatoTraspaso(c).then(function () {
         progStep('Cerrada + PDF + traspaso subido · ' + c.codigoRegistro);
@@ -924,7 +950,7 @@
         progStep('Cerrada + PDF; traspaso pendiente · ' + c.codigoRegistro);
         return true;
       });
-    }).catch(function (e) { progStep('ERROR · ' + c.codigoRegistro + ' · ' + e.message); return false; });
+    }).catch(function (e) { marcarFilaCierre(tr, e.message); progStep('ERROR · ' + c.codigoRegistro + ' · ' + e.message); return false; });
   }
 
   function cerrarTodas() {
@@ -946,25 +972,45 @@
     if (!checks.length) { progRender('Selecciona compras para cerrar.'); return Promise.resolve(); }
     progReset();
     progAdd(checks.length);
-    var items = checks.map(function (ch) { return candidatos[+ch.dataset.idx]; }).filter(function (c) { return c && c.idCompra; });
-    return secuencia(items, function (c) {
-      return (c.permisoUrl ? cambiarPermiso({ url: c.permisoUrl }) : Promise.resolve()).then(function () { return cerrarConFormato(c.compra); });
+    var items = checks.map(function (ch) {
+      var idx = +ch.dataset.idx;
+      var input = document.querySelector('.acs-motivo[data-idx="' + idx + '"]');
+      return { c: candidatos[idx], motivo: input ? input.value : '', tr: ch.closest('tr') };
+    }).filter(function (it) { return it.c && it.c.idCompra; });
+    return secuencia(items, function (it) {
+      return (it.c.permisoUrl ? cambiarPermiso({ url: it.c.permisoUrl }) : Promise.resolve())
+        .then(function () { return cerrarConFormato(it.c.compra, it.motivo, it.tr); });
     });
   }
 
   /* ============ TABLA ============ */
-  function filaCompra(c, idx, clase) {
+  function filaCompra(c, idx, clase, opts) {
+    opts = opts || {};
     var estatusTxt = c.estatus || (Number(c.idEstatus) === 1 ? 'Aceptada' : Number(c.idEstatus) === 0 ? 'Solicitada' : String(c.idEstatus));
     var tr = document.createElement('tr');
+    tr.tabIndex = 0;
+    tr.setAttribute('aria-selected', 'true');
     tr.innerHTML = '<td><input type="checkbox" checked class="' + clase + '" data-idx="' + idx + '"></td>' +
       '<td>' + c.codigoRegistro + '</td>' +
       '<td>' + estatusTxt + '</td>' +
       '<td>' + (c.volumen_Solicitado || '?') + ' / ' + (c.volumen_Entregado || '?') + '</td>' +
       '<td>' + (c.fechaCompra || '') + '</td>' +
-      '<td>' + (c.permiso_Vendedor || '') + '</td>';
+      '<td>' + (c.permiso_Vendedor || '') + '</td>' +
+      (opts.motivo ? '<td><input type="text" class="acs-motivo" data-idx="' + idx + '" aria-label="Motivo de cierre" placeholder="Mínimo 5 caracteres"><span class="acs-motivo-msg" role="alert"></span></td>' : '') +
+      (opts.estado ? '<td class="acs-fact-estado">' + opts.estado + '</td>' : '');
     document.querySelector('#acs-tabla tbody').appendChild(tr);
     actualizarResumen();
     return tr;
+  }
+
+  /* Fila a la que salta el teclado; -1 = tecla no manejada. */
+  function filaDestino(idx, total, tecla) {
+    if (!total || idx < 0) return -1;
+    if (tecla === 'ArrowDown') return Math.min(idx + 1, total - 1);
+    if (tecla === 'ArrowUp') return Math.max(idx - 1, 0);
+    if (tecla === 'Home') return 0;
+    if (tecla === 'End') return total - 1;
+    return -1;
   }
 
   /* Código visible del permiso (LP/…); el id interno solo como respaldo. */
@@ -1119,6 +1165,7 @@
       '  <div class="acs-pane" id="acs-pane-cerrar" style="display:none">Lista compras <b>Aceptadas</b> sin cerrar. Selecciona y usa <b>Cerrar seleccionadas</b>.</div>' +
       '  <div class="acs-pane" id="acs-pane-facturas" style="display:none"><div>Sube formatos de traspaso de compras cerradas sin factura y descarga los formatos PDF de las compras cerradas dentro del rango.</div></div>' +
       '  <div id="acs-facturas-acciones" style="display:none">' +
+      '    <label class="acs-opt" title="Lista también compras abiertas dentro del rango"><input type="checkbox" id="acs-fact-no-cerradas" ' + (CONFIG.INCLUIR_NO_CERRADAS_FACT ? 'checked' : '') + '> Incluir compras no cerradas</label>' +
       '    <button id="acs-refrescar-facturas" class="acs-btn"><i class="fa-solid fa-rotate"></i> Actualizar</button>' +
       '    <button id="acs-subir-facturas" class="acs-btn"><i class="fa-solid fa-cloud-arrow-up"></i> Subir</button>' +
       '    <button id="acs-descargar-formatos" class="acs-btn"><i class="fa-solid fa-file-arrow-down"></i> Descargar PDFs</button>' +
@@ -1133,7 +1180,7 @@
       '  </div>' +
       '  <div id="acs-status" role="status" aria-live="polite">Listo.</div>' +
       '  <div id="acs-prog"><div id="acs-bar-fill"></div><span id="acs-prog-text">0 / 0</span></div>' +
-      '  <div id="acs-summary">0 visibles · 0 seleccionadas</div>' +
+      '  <div id="acs-summary">0 visibles · 0 de 0 seleccionadas</div>' +
       '  <div id="acs-tabla-wrap"><table id="acs-tabla"><thead id="acs-thead"></thead><tbody></tbody></table></div>' +
       '</div>';
     var hubPane = ET.ui.tab('acs', 'ACS', 10, 470);
@@ -1179,8 +1226,9 @@
         ejecutar.innerHTML = cfg[0];
         ejecutar.className = cfg[1] ? 'acs-btn acs-btn-principal' : 'acs-btn';
       }
+      var extra = tab === 'facturas' ? '<th>Factura</th>' : tab === 'cerrar' ? '<th>Motivo de cierre</th>' : '';
       panel.querySelector('#acs-thead').innerHTML = (tab === 'inicio' || tab === 'cerrar' || tab === 'facturas')
-        ? '<tr><th></th><th>Registro</th><th>Estatus</th><th>Volumen</th><th>Fecha</th><th>Permiso</th></tr>'
+        ? '<tr><th></th><th>Registro</th><th>Estatus</th><th>Volumen</th><th>Fecha</th><th>Permiso</th>' + extra + '</tr>'
         : '<tr><th>Módulo</th><th>Permiso</th><th>Registro</th><th>Estado</th><th>Detalle</th></tr>';
       panel.querySelector('#acs-acciones').style.display = tab === 'facturas' ? 'none' : 'grid';
       panel.querySelector('#acs-facturas-acciones').style.display = tab === 'facturas' ? 'flex' : 'none';
@@ -1215,7 +1263,14 @@
     });
     panel.querySelector('#acs-refrescar-facturas').addEventListener('click', function () {
       escanearFacturas().then(function () {
-        if (!STOP) progRender(facturasCandidatas.length + ' traspaso(s) pendiente(s).');
+        if (!STOP) progRender(facturasCandidatas.length + ' compra(s) en la lista de facturas.');
+      });
+    });
+    panel.querySelector('#acs-fact-no-cerradas').addEventListener('change', function () {
+      CONFIG.INCLUIR_NO_CERRADAS_FACT = this.checked;
+      guardarConfig();
+      escanearFacturas().then(function () {
+        if (!STOP) progRender(facturasCandidatas.length + ' compra(s) en la lista de facturas.');
       });
     });
     panel.querySelector('#acs-subir-facturas').addEventListener('click', function () {
@@ -1227,7 +1282,38 @@
       descargarFormatosRango();
     });
     panel.querySelector('#acs-detener-facturas').addEventListener('click', detener);
-    panel.querySelector('#acs-tabla tbody').addEventListener('change', actualizarResumen);
+    var tbody = panel.querySelector('#acs-tabla tbody');
+    function filasConCheckbox() {
+      return Array.prototype.slice.call(tbody.querySelectorAll('tr')).filter(function (tr) {
+        return tr.querySelector('input[type="checkbox"]');
+      });
+    }
+    tbody.addEventListener('change', function (ev) {
+      var tr = ev.target.closest('tr');
+      if (tr && ev.target.type === 'checkbox') tr.setAttribute('aria-selected', ev.target.checked ? 'true' : 'false');
+      actualizarResumen();
+    });
+    tbody.addEventListener('keydown', function (ev) {
+      var tr = ev.target.closest('tr');
+      if (!tr) return;
+      var filasVisibles = filasConCheckbox();
+      var idx = filasVisibles.indexOf(tr);
+      if (idx === -1) return;
+      if ((ev.key === ' ' || ev.key === 'Spacebar') && ev.target.tagName !== 'INPUT') {
+        ev.preventDefault();
+        var ch = tr.querySelector('input[type="checkbox"]');
+        if (ch && !ch.disabled) {
+          ch.checked = !ch.checked;
+          ch.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return;
+      }
+      if (ev.target.tagName === 'INPUT' && ev.target.type !== 'checkbox') return;
+      var destino = filaDestino(idx, filasVisibles.length, ev.key);
+      if (destino < 0) return;
+      ev.preventDefault();
+      filasVisibles[destino].focus();
+    });
     panel.querySelector('#acs-cerrar-sel').addEventListener('click', function () {
       STOP = false;
       cerrarSeleccionadas().then(function () { progRender('Cierres terminados.'); });
@@ -1311,6 +1397,12 @@
     '#acs-tabla th{background:var(--ui-bg);color:var(--ui-fg);border-bottom:1px solid var(--ui-border-strong);padding:6px;text-align:left;font-weight: 400;position:sticky;top:0;z-index:1;}' +
     '#acs-tabla td{border-bottom:1px solid var(--ui-border);padding:6px;color:var(--ui-fg);overflow-wrap:anywhere;}' +
     '#acs-tabla tbody tr:nth-child(even){background:#f5f5f5;}' +
+    '#acs-tabla tbody tr:focus-visible{outline:2px solid var(--ui-focus);outline-offset:-2px;}' +
+    '.acs-motivo{width:100%;min-width:120px;border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;padding:3px 5px;border-radius:0;}' +
+    '.acs-motivo:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
+    '.acs-motivo-msg{display:block;color:var(--ui-err-fg);font-size:12px;}' +
+    '#acs-facturas-acciones{flex-wrap:wrap;}' +
+    '#acs-facturas-acciones .acs-opt{flex:1 1 100%;}' +
     '#acs-tabla tbody tr.acs-factura-ok{background:var(--ui-ok-bg);}' +
     '.acs-est.ok{color:var(--ui-ok-fg);}' +
     '.acs-est.fail,.acs-fail{color:var(--ui-err-fg);}'
@@ -1333,6 +1425,8 @@
       cuerpoDespacho: cuerpoDespacho,
       cuerpoRecepcion: cuerpoRecepcion,
       nombreArchivoTraspaso: nombreArchivoTraspaso,
+      clasificarFactura: clasificarFactura,
+      filaDestino: filaDestino,
       elegirVehiculo: elegirVehiculo
     };
   }
@@ -1373,12 +1467,9 @@
   /* Ajustes persistentes: mismos valores de acs_cfg, editados desde la pestaña Ajustes. */
   if (ET.config) {
     [
-      ['VEHICULOS', 'Vehículos (uno por línea: nombre|placas)', 'textarea'],
       ['DELAY_MS', 'Espera entre operaciones (ms)', 'number'],
-      ['MOTIVO_CIERRE', 'Motivo de cierre', 'text'],
       ['CERRAR_AL_RECEPCIONAR', 'Cerrar al recepcionar', 'check'],
-      ['VERBOSE', 'Registro detallado', 'check'],
-      ['INCLUIR_NO_CERRADAS_FACT', 'Incluir compras no cerradas (facturas)', 'check']
+      ['VERBOSE', 'Registro detallado', 'check']
     ].forEach(function (f) {
       ET.config.add({
         seccion: 'ACS',
@@ -1389,6 +1480,21 @@
         leer: function () { return CONFIG[f[0]]; },
         guardar: function (v) { CONFIG[f[0]] = v; guardarConfig(); }
       });
+    });
+
+    ET.config.add({
+      seccion: 'ACS',
+      clave: 'acs.vehiculos',
+      etiqueta: 'Vehículos',
+      tipo: 'lista',
+      defecto: DEFAULTS.VEHICULOS,
+      columnas: [
+        { clave: 'nombre', etiqueta: 'Nombre', ancho: '28%' },
+        { clave: 'placas', etiqueta: 'Placas', ancho: '26%' },
+        { clave: 'id', etiqueta: 'ID', ancho: '10%' }
+      ],
+      leer: function () { return CONFIG.VEHICULOS; },
+      guardar: function (v) { CONFIG.VEHICULOS = v; guardarConfig(); }
     });
   }
 

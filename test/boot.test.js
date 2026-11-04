@@ -49,7 +49,7 @@ test('ACS arranca sin vehiculo, placas ni fechas de otra empresa', async () => {
   const hasta = doc.querySelector('#acs-hasta').value;
   const desde = doc.querySelector('#acs-desde').value;
 
-  expect(doc.querySelector('#cfg-acs-vehiculos').value).toBe('');
+  expect(doc.querySelector('[data-lista="acs.vehiculos"]')).toBeTruthy();
   // Por defecto, la semana pasada completa: lunes a domingo.
   expect(new Date(desde + 'T00:00:00').getDay()).toBe(1);
   expect(new Date(hasta + 'T00:00:00').getDay()).toBe(0);
@@ -62,10 +62,12 @@ test('el panel Ajustes reúne las opciones persistentes', async () => {
   expect(tabs(win)).toContain('ajustes');
   const pane = doc.querySelector('.shub-pane[data-id="ajustes"]');
   expect(pane).toBeTruthy();
-  expect(pane.querySelector('#cfg-acs-vehiculos')).toBeTruthy();
+  expect(pane.querySelector('[data-lista="acs.vehiculos"]')).toBeTruthy();
   expect(pane.querySelector('#cfg-acs-delay-ms')).toBeTruthy();
   expect(pane.querySelector('#cfg-acs-cerrar-al-recepcionar')).toBeTruthy();
-  expect(pane.querySelector('#cfg-acs-incluir-no-cerradas-fact')).toBeTruthy();
+  /* La casilla de no cerradas vive ahora en la pestaña Facturas, no en Ajustes. */
+  expect(pane.querySelector('#cfg-acs-incluir-no-cerradas-fact')).toBeFalsy();
+  expect(doc.querySelector('#acs-fact-no-cerradas')).toBeTruthy();
   expect(pane.querySelector('#cfg-traspasos-espera')).toBeTruthy();
   /* ACS ya no lleva su propio cajón de ajustes. */
   expect(doc.querySelector('#acs-cfg')).toBeFalsy();
