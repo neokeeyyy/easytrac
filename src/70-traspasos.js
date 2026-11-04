@@ -3299,8 +3299,25 @@
       box-shadow: none;
       font-size: 13px;
     }
-    .st-matrix { min-height: 90px; }
-    .st-matrix:empty::before { content: "Pega aquí el bloque desde Excel"; color: var(--ui-muted); }
+    .st-matrix {
+      min-height: 90px;
+      padding: 10px;
+      background: #f5f5f5;
+      border: 1px solid var(--ui-border);
+    }
+    .st-matrix:empty::before {
+      content: "Pega aquí el bloque desde Excel";
+      display: block;
+      padding-top: 26px;
+      text-align: center;
+      color: var(--ui-muted);
+    }
+    .st-output {
+      padding: 10px;
+      background: #f5f5f5;
+      border: 1px solid var(--ui-border);
+    }
+    .st-output:empty { display: none; }
 
   `;
 

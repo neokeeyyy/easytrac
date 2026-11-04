@@ -3,3 +3,4 @@ SCRAP/
 *.pdf
 
 .playwright-mcp/
+.tmp/
