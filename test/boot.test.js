@@ -46,6 +46,18 @@ test('acuses stays out of pages it cannot work on', async () => {
   expect(ids).not.toContain('acuses');
 });
 
+test('acuses monta el panel de vista previa oculto', async () => {
+  const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
+  const prev = win.document.querySelector('#sa-prev');
+  expect(prev).toBeTruthy();
+  expect(prev.getAttribute('role')).toBe('dialog');
+  expect(prev.className).toBe('');
+  expect(prev.querySelector('#sa-prev-body')).toBeTruthy();
+  const css = win.document.getElementById('sa-css').textContent;
+  expect(css).toContain('sa-prev-in');
+  expect(css).toContain('cubic-bezier(.34,1.56,.64,1)');
+});
+
 test('the traspasos matrix is a cell grid mounted in its tab', async () => {
   const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
   const host = win.document.querySelector('#siretrac-traspasos-host');

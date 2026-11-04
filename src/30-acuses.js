@@ -966,6 +966,7 @@
       pdfCache.clear(); pdfProm.clear();
       $('#sa-lista').innerHTML = '';
       ocultarTip();
+      cerrarPrev();
       actualizarCuenta();
       st('Limpiado');
     }
@@ -1002,6 +1003,20 @@
       #sa-panel .sa-st{font-size:10px;line-height:1.3;color:#706F6F;min-height:13px;margin-top:3px;word-break:break-word}
       #sa-tip{position:fixed;z-index:2147483647;display:none;pointer-events:none;background:#fff;color:#333;border:1px solid #706F6F;border-radius:0;padding:4px 6px;font:10px/1.35 var(--ui-font);max-width:290px}
       #sa-tip .k{color:#706F6F}
+      #sa-prev{position:fixed;left:16px;top:50%;width:50vw;max-width:900px;height:78vh;z-index:2147482000;display:none;flex-direction:column;background:var(--ui-bg);color:var(--ui-fg);border:1px solid var(--ui-border-strong);font:400 12px/1.4 var(--ui-font);transform:translateY(-50%)}
+      #sa-prev.on{display:flex;animation:sa-prev-in 320ms cubic-bezier(.34,1.56,.64,1) both}
+      #sa-prev.sa-out{animation:sa-prev-out 130ms ease-in both}
+      @keyframes sa-prev-in{0%{opacity:0;transform:translateY(-46%) scale(.92)}60%{opacity:1;transform:translateY(-51%) scale(1.012)}100%{opacity:1;transform:translateY(-50%) scale(1)}}
+      @keyframes sa-prev-out{to{opacity:0;transform:translateY(-50%) scale(.97)}}
+      #sa-prev-bar{display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid var(--ui-border)}
+      #sa-prev-bar strong{font-weight:400;color:var(--ui-muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+      #sa-prev-bar span{flex:1;color:var(--ui-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      #sa-prev-bar button{border:1px solid var(--ui-border-strong);background:var(--ui-bg);color:var(--ui-fg);font:400 11px/18px var(--ui-font);padding:0 8px;cursor:pointer}
+      #sa-prev-bar button:hover{background:var(--ui-header);border-color:var(--ui-header);color:#fff}
+      #sa-prev-body{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:#f5f5f5;overflow:hidden}
+      #sa-prev-body iframe{width:100%;height:100%;border:0;background:#fff}
+      #sa-prev-body .sa-prev-msg{padding:16px;color:var(--ui-muted);text-align:center}
+      @media (prefers-reduced-motion:reduce){#sa-prev.on,#sa-prev.sa-out{animation:none}}
     `;
     const style = document.createElement('style');
     style.id = 'sa-css';
@@ -1059,6 +1074,89 @@
 
     const lista = $('#sa-lista');
 
+    // ---------- Vista previa del acuse (documento original, media pantalla) ----------
+    const prev = document.createElement('div');
+    prev.id = 'sa-prev';
+    prev.setAttribute('role', 'dialog');
+    prev.setAttribute('aria-label', 'Vista previa del acuse');
+    prev.innerHTML = '<div id="sa-prev-bar"><strong>Acuse</strong><span></span><button type="button" title="Cerrar (Esc)">Cerrar</button></div><div id="sa-prev-body"></div>';
+    document.body.appendChild(prev);
+    const prevCuerpo = prev.querySelector('#sa-prev-body');
+    const prevUrls = new Map();
+    let prevActual = '', prevTimer = 0, prevOcultar = 0, prevFin = 0;
+
+    function prevUrlDe(it) {
+      const id = it.idAcuse;
+      if (prevUrls.has(id)) return Promise.resolve(prevUrls.get(id));
+      return pdfDe(it).then(b => {
+        const url = URL.createObjectURL(new Blob([b], { type: 'application/pdf' }));
+        if (prevUrls.size >= 12) {
+          const viejo = prevUrls.keys().next().value;
+          URL.revokeObjectURL(prevUrls.get(viejo));
+          prevUrls.delete(viejo);
+        }
+        prevUrls.set(id, url);
+        return url;
+      });
+    }
+
+    function cerrarPrev() {
+      clearTimeout(prevTimer);
+      clearTimeout(prevOcultar);
+      clearTimeout(prevFin);
+      if (!prevActual) return;
+      prev.classList.add('sa-out');
+      prevFin = setTimeout(() => {
+        prev.classList.remove('on', 'sa-out');
+        prevActual = '';
+      }, 140);
+    }
+
+    /* Hover-out waits long enough to reach the panel with the mouse. */
+    function ocultarPrev() {
+      clearTimeout(prevOcultar);
+      prevOcultar = setTimeout(cerrarPrev, 1200);
+    }
+
+    function abrirPrev(n) {
+      const r = filas[n];
+      if (!r || r.error || !r.it || !r.it.idAcuse) return;
+      clearTimeout(prevOcultar);
+      clearTimeout(prevFin);
+      const id = r.it.idAcuse;
+      prev.classList.remove('sa-out');
+      prev.classList.add('on');
+      prev.querySelector('span').textContent = id;
+      if (prevActual === id) return;
+      prevActual = id;
+      prevCuerpo.innerHTML = '<div class="sa-prev-msg">Cargando el acuse…</div>';
+      prevUrlDe(r.it).then(url => {
+        if (prevActual !== id) return;
+        prevCuerpo.innerHTML = '';
+        const marco = document.createElement('iframe');
+        marco.src = url;
+        marco.title = 'Acuse ' + id;
+        prevCuerpo.appendChild(marco);
+      }).catch(e => {
+        if (prevActual !== id) return;
+        prevCuerpo.innerHTML = '<div class="sa-prev-msg">No se pudo abrir el acuse: ' + esc(e.message) + '</div>';
+      });
+    }
+
+    function programarPrev(n) {
+      clearTimeout(prevTimer);
+      prevTimer = setTimeout(() => abrirPrev(n), 320);
+    }
+
+    prev.addEventListener('mouseenter', () => {
+      clearTimeout(prevOcultar);
+      clearTimeout(prevFin);
+      prev.classList.remove('sa-out');
+    });
+    prev.addEventListener('mouseleave', ocultarPrev);
+    prev.querySelector('button').addEventListener('click', cerrarPrev);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') cerrarPrev(); });
+
     lista.addEventListener('mousedown', e => {
       if (e.button !== 0) return;
       const row = e.target.closest('.sa-i');
@@ -1094,23 +1192,28 @@
 
     lista.addEventListener('mouseover', e => {
       const row = e.target.closest('.sa-i');
-      if (row) mostrarTip(+row.dataset.n, e.clientX, e.clientY);
+      if (row) {
+        mostrarTip(+row.dataset.n, e.clientX, e.clientY);
+        programarPrev(+row.dataset.n);
+      }
     });
     lista.addEventListener('mouseout', e => {
       const row = e.target.closest('.sa-i');
       if (!row) return;
       if (e.relatedTarget && row.contains(e.relatedTarget)) return;
       ocultarTip();
+      ocultarPrev();
     });
     lista.addEventListener('focusin', e => {
       const row = e.target.closest('.sa-i');
       if (!row) return;
       const b = row.getBoundingClientRect();
       mostrarTip(+row.dataset.n, b.left, b.bottom - 20);
+      abrirPrev(+row.dataset.n);
     });
     lista.addEventListener('focusout', e => {
       const row = e.target.closest('.sa-i');
-      if (row && (!e.relatedTarget || !row.contains(e.relatedTarget))) ocultarTip();
+      if (row && (!e.relatedTarget || !row.contains(e.relatedTarget))) { ocultarTip(); cerrarPrev(); }
     });
     document.addEventListener('scroll', ocultarTip, true);
     window.addEventListener('resize', ocultarTip);
