@@ -5,19 +5,30 @@
   var ET = globalThis.EasyTrac;
   var matchInput = ET.core.text.matchInput, matchText = ET.core.text.matchText;
 
+  /* Devuelve { id, codigo, url }: `id` es el idPermiso interno y `codigo` el LP/… que ve el usuario. */
   function escanearPermisos(html) {
+    html = String(html || '');
     var lista = [];
     var vistos = {};
+    function add(id, codigo, href) {
+      if (!id || vistos[id] || !href) return;
+      vistos[id] = true;
+      var url = href.indexOf('http') === 0 ? href : href.indexOf('/') === 0 ? href : '/' + href;
+      lista.push({ id: id, codigo: codigo || '', url: url });
+    }
+    // La tabla #example trae el código visible; el regex de hrefs es el respaldo.
+    if (typeof DOMParser === 'function') {
+      permisosDeDocumento(new DOMParser().parseFromString(html, 'text/html')).forEach(function (p) {
+        add(p.id, p.nombre, p.href);
+      });
+    }
     var re = /href\s*=\s*["']([^"']*SeleccionarPermiso[^"']*)["']/gi;
     var m;
     while ((m = re.exec(html))) {
       var href = m[1].replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/g, "'");
       if (href.indexOf('idPermiso') === -1) continue;
       var idm = href.match(/idPermiso=(\d+)/);
-      if (!idm || vistos[idm[1]]) continue;
-      vistos[idm[1]] = true;
-      var url = href.indexOf('http') === 0 ? href : href.indexOf('/') === 0 ? href : '/' + href;
-      lista.push({ id: idm[1], url: url });
+      if (idm) add(idm[1], '', href);
     }
     return lista;
   }

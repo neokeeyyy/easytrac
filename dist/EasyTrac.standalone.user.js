@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.3
+// @version      1.0.4
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -273,19 +273,30 @@
   var ET = globalThis.EasyTrac;
   var matchInput = ET.core.text.matchInput, matchText = ET.core.text.matchText;
 
+  /* Devuelve { id, codigo, url }: `id` es el idPermiso interno y `codigo` el LP/… que ve el usuario. */
   function escanearPermisos(html) {
+    html = String(html || '');
     var lista = [];
     var vistos = {};
+    function add(id, codigo, href) {
+      if (!id || vistos[id] || !href) return;
+      vistos[id] = true;
+      var url = href.indexOf('http') === 0 ? href : href.indexOf('/') === 0 ? href : '/' + href;
+      lista.push({ id: id, codigo: codigo || '', url: url });
+    }
+    // La tabla #example trae el código visible; el regex de hrefs es el respaldo.
+    if (typeof DOMParser === 'function') {
+      permisosDeDocumento(new DOMParser().parseFromString(html, 'text/html')).forEach(function (p) {
+        add(p.id, p.nombre, p.href);
+      });
+    }
     var re = /href\s*=\s*["']([^"']*SeleccionarPermiso[^"']*)["']/gi;
     var m;
     while ((m = re.exec(html))) {
       var href = m[1].replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/g, "'");
       if (href.indexOf('idPermiso') === -1) continue;
       var idm = href.match(/idPermiso=(\d+)/);
-      if (!idm || vistos[idm[1]]) continue;
-      vistos[idm[1]] = true;
-      var url = href.indexOf('http') === 0 ? href : href.indexOf('/') === 0 ? href : '/' + href;
-      lista.push({ id: idm[1], url: url });
+      if (idm) add(idm[1], '', href);
     }
     return lista;
   }
@@ -994,7 +1005,7 @@
     var qs = idx === -1 ? '' : p.url.substring(idx + 1);
     verboseLog('CAMBIO PERMISO', { id: p.id, permiso: p.permiso || '', url: p.url });
     return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: qs, credentials: 'same-origin' }).catch(function (e) {
-      progRender('No se pudo cambiar al permiso ' + p.id + ': ' + e.message);
+      progRender('No se pudo cambiar al permiso ' + nombrePermiso(p) + ': ' + e.message);
     });
   }
 
@@ -1295,7 +1306,7 @@
     return listar().then(function (data) {
       var pend = data.filter(filtro);
       progAdd(pend.length);
-      progRender((permiso ? 'Permiso ' + permiso.id : 'Permisos') + ': ' + pend.length + ' de ' + data.length + ' · ' + verbo);
+      progRender((permiso ? 'Permiso ' + nombrePermiso(permiso) : 'Permisos') + ': ' + pend.length + ' de ' + data.length + ' · ' + verbo);
       return procesarLote(pend, accion, verbo, modulo, permiso);
     });
   }
@@ -1662,9 +1673,12 @@
     return tr;
   }
 
+  /* Código visible del permiso (LP/…); el id interno solo como respaldo. */
+  function nombrePermiso(p) { return p ? (p.codigo || p.id) : ''; }
+
   function nuevaFila(modulo, permiso, registro) {
     var tr = document.createElement('tr');
-    tr.innerHTML = '<td>' + modulo + '</td><td>' + (permiso ? permiso.id : 'actual') + '</td><td>' + registro + '</td>' +
+    tr.innerHTML = '<td>' + modulo + '</td><td>' + (permiso ? nombrePermiso(permiso) : 'actual') + '</td><td>' + registro + '</td>' +
       '<td class="acs-est pend">…</td><td class="acs-det"></td>';
     document.querySelector('#acs-tabla tbody').appendChild(tr);
     var est = tr.querySelector('.acs-est');
@@ -1708,7 +1722,7 @@
         }
         progRender('Permisos: ' + perms.map(function (p) { return p.id; }).join(', '));
         return secuencia(perms, function (p) {
-          progRender('── Permiso ' + p.id + ' ──');
+          progRender('── Permiso ' + nombrePermiso(p) + ' ──');
           return cambiarPermiso(p).then(function () { return fn(p); });
         }).then(function () { progRender('✔ Módulo ' + nombre + ' terminado.'); });
       });

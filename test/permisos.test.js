@@ -56,3 +56,32 @@ test('ambos consumidores parten del mismo escaneo', function () {
   assert.deepEqual(acuses.permisosDeTabla(doc).map(p => p.codigo), ps.map(p => p.nombre));
   assert.deepEqual(traspasos.parsePermitsFromDocument(doc).map(p => p.permit), ps.map(p => p.nombre));
 });
+
+test('escanearPermisos devuelve el código visible (LP/…) junto al id interno', function () {
+  const prev = globalThis.DOMParser;
+  globalThis.DOMParser = new JSDOM(html).window.DOMParser;
+  try {
+    const ps = ET.core.permisos.escanearPermisos(html);
+    assert.deepEqual(ps.map(p => p.id), ['111', '222', '333']);
+    assert.deepEqual(ps.map(p => p.codigo), [
+      'LP/14432/DIST/PLA/2016',
+      'LP/16140/EXP/ES/2016',
+      'LP/20517/EXP/ES/2017',
+    ]);
+    assert.ok(ps.every(p => p.url.indexOf('idPermiso=') !== -1));
+  } finally {
+    globalThis.DOMParser = prev;
+  }
+});
+
+test('sin DOMParser escanearPermisos sigue sacando los ids por regex', function () {
+  const prev = globalThis.DOMParser;
+  globalThis.DOMParser = undefined;
+  try {
+    const ps = ET.core.permisos.escanearPermisos(html);
+    assert.deepEqual(ps.map(p => p.id), ['111', '222', '333']);
+    assert.deepEqual(ps.map(p => p.codigo), ['', '', '']);
+  } finally {
+    globalThis.DOMParser = prev;
+  }
+});
