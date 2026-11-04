@@ -1,5 +1,5 @@
-'use strict';
-/* Pruebas de la lógica pura de ACS (src/20-acs.js): filtros, cuerpos de petición y nombre del PDF. */
+﻿'use strict';
+/* Pruebas de la lÃ³gica pura de ACS (src/20-acs.js): filtros, cuerpos de peticiÃ³n y nombre del PDF. */
 const { test } = require('bun:test');
 const assert = require('node:assert/strict');
 
@@ -9,6 +9,9 @@ require('../src/03-http.js');
 require('../src/04-dates.js');
 require('../src/05-text.js');
 require('../src/06-permisos.js');
+/* Registro de ajustes de mentira: evita cargar el panel (DOM) y sus campos reales. */
+const camposConfig = [];
+globalThis.EasyTrac.config = { add: (c) => camposConfig.push(c), vehiculos: () => [] };
 const acs = require('../src/20-acs.js');
 
 const RANGO = {
@@ -29,7 +32,7 @@ function compra(extra) {
 
 const campos = (body) => Object.fromEntries(new URLSearchParams(body));
 
-test('enRango acepta los bordes del rango (mismo día) y rechaza los días vecinos', function () {
+test('enRango acepta los bordes del rango (mismo dÃ­a) y rechaza los dÃ­as vecinos', function () {
   assert.equal(acs.enRango('10/08/2026', RANGO), true);
   assert.equal(acs.enRango('16/08/2026', RANGO), true);
   assert.equal(acs.enRango('12/08/2026', RANGO), true);
@@ -37,7 +40,7 @@ test('enRango acepta los bordes del rango (mismo día) y rechaza los días vecin
   assert.equal(acs.enRango('17/08/2026', RANGO), false);
 });
 
-test('enRango rechaza fechas vacías o ilegibles sin lanzar', function () {
+test('enRango rechaza fechas vacÃ­as o ilegibles sin lanzar', function () {
   assert.equal(acs.enRango('', RANGO), false);
   assert.equal(acs.enRango(undefined, RANGO), false);
   assert.equal(acs.enRango('32/13/2026', RANGO), false);
@@ -57,7 +60,7 @@ test('filtro de aceptadas: solo estatus 1 dentro del rango', function () {
   assert.equal(acs.esCompraVisible(compra({ idEstatus: 1, fechaCompra: '' }), 'aceptadas', RANGO), false);
 });
 
-test('filtro en tránsito: estatus 4 y fechaDespacho en rango', function () {
+test('filtro en trÃ¡nsito: estatus 4 y fechaDespacho en rango', function () {
   assert.equal(acs.esCompraVisible(compra({ idEstatus: 4, fechaDespacho: '16/08/2026' }), 'enTransito', RANGO), true);
   assert.equal(acs.esCompraVisible(compra({ idEstatus: 4, fechaDespacho: '17/08/2026' }), 'enTransito', RANGO), false);
   assert.equal(acs.esCompraVisible(compra({ idEstatus: 4, fechaDespacho: '09/08/2026' }), 'enTransito', RANGO), false);
@@ -72,7 +75,7 @@ test('filtro de cerrables: aceptada sin fechaCierre y dentro del rango', functio
   assert.equal(acs.esCompraVisible(compra({ idEstatus: 1, fechaCompra: '17/08/2026' }), 'cerrables', RANGO), false);
 });
 
-test('filtro del listado: excluye en tránsito (4) y rechazadas, conserva 0 y 2', function () {
+test('filtro del listado: excluye en trÃ¡nsito (4) y rechazadas, conserva 0 y 2', function () {
   assert.equal(acs.esCompraVisible(compra({ idEstatus: 0 }), 'listado', RANGO), true);
   assert.equal(acs.esCompraVisible(compra({ idEstatus: 2 }), 'listado', RANGO), true);
   assert.equal(acs.esCompraVisible(compra({ idEstatus: 4 }), 'listado', RANGO), false);
@@ -89,7 +92,7 @@ test('filtro de facturas: cerradas (2), con fechaCierre o incluyendo no cerradas
   assert.equal(acs.esCompraVisible(compra({ idEstatus: 2, fechaCompra: '01/08/2026' }), 'facturas', RANGO), false);
 });
 
-test('los filtros por permiso vendedor comparan sin espacios y respetan el vacío', function () {
+test('los filtros por permiso vendedor comparan sin espacios y respetan el vacÃ­o', function () {
   const cfg = Object.assign({}, RANGO, { PERMISO_FILTRO: 'LP/1295' });
   assert.equal(acs.pasaFiltroPermiso({ permiso_Vendedor: ' LP/1295 ' }, cfg), true);
   assert.equal(acs.pasaFiltroPermiso({ permiso_Vendedor: 'LP/5621' }, cfg), false);
@@ -104,12 +107,12 @@ test('un tipo de filtro desconocido o una compra nula no son visibles', function
   assert.equal(acs.esCompraVisible(null, 'solicitadas', RANGO), false);
 });
 
-test('cuerpoAceptar codifica el código y conserva los campos', function () {
+test('cuerpoAceptar codifica el cÃ³digo y conserva los campos', function () {
   const body = acs.cuerpoAceptar({ idCompra: 42, codigoRegistro: 'LP/1295/7/4334' });
   assert.deepEqual(campos(body), { idCompra: '42', CodigoRegistro: 'LP/1295/7/4334' });
 });
 
-test('cuerpoGuardarAceptar incluye comprador, vendedor y cadena vacía', function () {
+test('cuerpoGuardarAceptar incluye comprador, vendedor y cadena vacÃ­a', function () {
   const body = acs.cuerpoGuardarAceptar({ idCompra: 42, codigoRegistro: 'LP/1295/7/4334' }, '11', '22');
   assert.deepEqual(campos(body), {
     idCompra: '42',
@@ -120,7 +123,7 @@ test('cuerpoGuardarAceptar incluye comprador, vendedor y cadena vacía', functio
   });
 });
 
-test('cuerpoVerificaCompra codifica el código y fija proceso=2', function () {
+test('cuerpoVerificaCompra codifica el cÃ³digo y fija proceso=2', function () {
   assert.deepEqual(campos(acs.cuerpoVerificaCompra('LP/1295/7/4334')), {
     prefixCodigoRegistro: 'LP/1295/7/4334',
     proceso: '2'
@@ -129,9 +132,9 @@ test('cuerpoVerificaCompra codifica el código y fija proceso=2', function () {
 
 test('cuerpoCerrarCompra soporta acentos y comillas en motivo y acuse', function () {
   const o = {
-    contenidoAcuse: 'Estado=Cerrada|Razón Social Comprador=GAS "OJUELOS" & Cía.|Observaciones=añadido',
+    contenidoAcuse: 'Estado=Cerrada|RazÃ³n Social Comprador=GAS "OJUELOS" & CÃ­a.|Observaciones=aÃ±adido',
     idCompra: '123',
-    motivo: 'Cierre "urgente" por ñandú & 100%',
+    motivo: 'Cierre "urgente" por Ã±andÃº & 100%',
     codigo: 'LP/1295/7/4334',
     idComprador: '11',
     idVendedor: '22',
@@ -151,7 +154,7 @@ test('cuerpoCerrarCompra soporta acentos y comillas en motivo y acuse', function
   assert.equal(body.includes('\n'), false);
 });
 
-test('cuerpoCerrarCompra omite volumenCierre cuando viene vacío', function () {
+test('cuerpoCerrarCompra omite volumenCierre cuando viene vacÃ­o', function () {
   const body = acs.cuerpoCerrarCompra({
     contenidoAcuse: 'Estado=Cerrada|', idCompra: '1', motivo: 'motivo', codigo: 'LP/1/2/3',
     idComprador: '4', idVendedor: '5', volumenCierre: ''
@@ -170,7 +173,7 @@ test('cuerpoDespacho conserva acuse con acentos, comillas y pipes', function () 
     codigoRegistro: 'LP/1295/7/4334',
     idComprador: '11',
     idVendedor: '22',
-    acuse: '|Razón Social Comprador=GAS "OJUELOS, S.A." & Cía|Dirección=Km. 6+500'
+    acuse: '|RazÃ³n Social Comprador=GAS "OJUELOS, S.A." & CÃ­a|DirecciÃ³n=Km. 6+500'
   };
   const body = acs.cuerpoDespacho(o);
   assert.deepEqual(campos(body), {
@@ -197,7 +200,7 @@ test('cuerpoRecepcion conserva acuse con acentos y comillas', function () {
     codigoRegistro: 'LP/1295/7/4334',
     idComprador: '11',
     idVendedor: '22',
-    acuse: '|Permiso Comprador=LP/1295|Razón Social="GAS DE OJUELOS"|Placas=JU47194'
+    acuse: '|Permiso Comprador=LP/1295|RazÃ³n Social="GAS DE OJUELOS"|Placas=JU47194'
   };
   const body = acs.cuerpoRecepcion(o);
   assert.deepEqual(campos(body), {
@@ -214,14 +217,14 @@ test('cuerpoRecepcion conserva acuse con acentos y comillas', function () {
   assert.equal(body.includes('"'), false);
 });
 
-test('nombreArchivoTraspaso arma LP-permiso-número.pdf', function () {
+test('nombreArchivoTraspaso arma LP-permiso-nÃºmero.pdf', function () {
   assert.equal(acs.nombreArchivoTraspaso('LP/1295/DIST/ES/2026'), 'LP-1295-DIST-ES-2026.pdf');
   assert.equal(acs.nombreArchivoTraspaso('LP/5621/EXP/PLA/2025'), 'LP-5621-EXP-PLA-2025.pdf');
   assert.equal(acs.nombreArchivoTraspaso('LP/1295/7/4334'), 'LP-1295-7-4334.pdf');
 });
 
-test('nombreArchivoTraspaso cae al nombre genérico con códigos raros y nunca deja caracteres inválidos', function () {
-  const raros = ['', undefined, null, 'código raro "x"/y\n.pdf', 'sin formato', '<>|?*'];
+test('nombreArchivoTraspaso cae al nombre genÃ©rico con cÃ³digos raros y nunca deja caracteres invÃ¡lidos', function () {
+  const raros = ['', undefined, null, 'cÃ³digo raro "x"/y\n.pdf', 'sin formato', '<>|?*'];
   raros.forEach(function (codigo) {
     const nombre = acs.nombreArchivoTraspaso(codigo);
     assert.equal(nombre, 'formato_traspaso.pdf');
@@ -263,3 +266,30 @@ test('filaDestino mueve con flechas, Home y End sin salirse de la tabla', () => 
   assert.equal(acs.filaDestino(0, 0, 'ArrowDown'), -1);
   assert.equal(acs.filaDestino(1, 4, 'Enter'), -1);
 });
+
+test('el formato de traspaso no imprime datos de otra empresa', function () {
+  let textos = [];
+  const doc = new Proxy({}, {
+    get: function (_, k) {
+      if (k === 'text') return function (t) { textos.push(Array.isArray(t) ? t.join('|') : String(t)); };
+      return function () {};
+    }
+  });
+  globalThis.jspdf = { jsPDF: function () { return doc; } };
+  const compra = { volumen_Entregado: '1000', fechaCompra: '26/10/2026', permiso_Vendedor: 'LP/14432/DIST/PLA/2016' };
+
+  acs.generarFormatoTraspaso(compra);
+  assert.equal(textos.some(function (t) { return /OJUELOS|JALISCO/i.test(t); }), false, 'sin emisor configurado no se imprime una empresa fija');
+
+  camposConfig.find((c) => c.clave === 'acs.emisor').guardar('EMPRESA DE PRUEBA');
+  camposConfig.find((c) => c.clave === 'acs.emisor_dir').guardar('CALLE 1\nCOLONIA 2');
+  textos = [];
+  acs.generarFormatoTraspaso(compra);
+  assert.ok(textos.some(function (t) { return t.indexOf('EMPRESA DE PRUEBA') >= 0; }), 'se imprime el emisor configurado');
+
+  camposConfig.find((c) => c.clave === 'acs.emisor').guardar('');
+  camposConfig.find((c) => c.clave === 'acs.emisor_dir').guardar('');
+});
+
+
+

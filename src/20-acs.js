@@ -30,7 +30,9 @@
     PERMISOS: [],               // [] = descubrir del sitio; o forzar: [id, id, ...]
     PERMISO_FILTRO: '',         // permiso vendedor específico; vacío = todos
     INCLUIR_NO_CERRADAS_FACT: false, // Facturas: incluir compras de cualquier estatus, no solo cerradas
-    VERBOSE: true                // diagnóstico detallado en consola y estado del panel
+    VERBOSE: true,               // diagnóstico detallado en consola y estado del panel
+    EMISOR: '',                  // razón social que firma el formato de traspaso
+    EMISOR_DIR: ''               // domicilio del emisor en el PDF, dos líneas como máximo
   };
 
   var CONFIG = {};
@@ -388,14 +390,17 @@
     var xCenter = function (left, right) { return ptToMm((left + right) / 2); };
     var xRight = function (right) { return ptToMm(right); };
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text('GAS DE OJUELOS,  S.A DE C.V.', xCenter(190.13, 349.20), 25, { align: 'center' });
+    if (CONFIG.EMISOR) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text(CONFIG.EMISOR, xCenter(190.13, 349.20), 25, { align: 'center' });
+    }
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.text('KM. 6+500 CARRETERA OJUELOS-OCAMPO,', xCenter(195.65, 374.04), 34, { align: 'center' });
-    doc.text('MUNICIPIO DE OJUELOS, ESTADO DE JALISCO', xCenter(192.17, 377.61), 39, { align: 'center' });
+    if (CONFIG.EMISOR_DIR) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.text(String(CONFIG.EMISOR_DIR).split('\n').slice(0, 2), xCenter(195.65, 374.04), 34, { align: 'center' });
+    }
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
@@ -1425,6 +1430,7 @@
       cuerpoDespacho: cuerpoDespacho,
       cuerpoRecepcion: cuerpoRecepcion,
       nombreArchivoTraspaso: nombreArchivoTraspaso,
+      generarFormatoTraspaso: generarFormatoTraspaso,
       clasificarFactura: clasificarFactura,
       filaDestino: filaDestino,
       elegirVehiculo: elegirVehiculo
@@ -1469,7 +1475,9 @@
     [
       ['DELAY_MS', 'Espera entre operaciones (ms)', 'number'],
       ['CERRAR_AL_RECEPCIONAR', 'Cerrar al recepcionar', 'check'],
-      ['VERBOSE', 'Registro detallado', 'check']
+      ['VERBOSE', 'Registro detallado', 'check'],
+      ['EMISOR', 'Razón social que firma el traspaso (PDF)', 'text'],
+      ['EMISOR_DIR', 'Domicilio del emisor (PDF)', 'textarea']
     ].forEach(function (f) {
       ET.config.add({
         seccion: 'ACS',
