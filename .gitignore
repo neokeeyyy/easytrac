@@ -4,3 +4,4 @@ SCRAP/
 
 .playwright-mcp/
 .tmp/
+*.xlsm

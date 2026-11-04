@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.24'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.25'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -4284,6 +4284,9 @@
         module.exports = {
             norm: norm,
             parsear: parsear,
+            parsearEstaciones: parsearEstaciones,
+            parsearReporte: parsearReporte,
+            colaDeEstaciones: colaDeEstaciones,
             sectorDesdeCelda: sectorDesdeCelda,
             valoresDeLinea: valoresDeLinea,
             resolverFilas: resolverFilas
@@ -4300,8 +4303,15 @@
     ET.ui.tab('venta', 'Venta', 40, 300).innerHTML =
         '<div style="font-weight: 400;margin-bottom:6px">Auto-fill de ventas</div>' +
         '<div style="font-size:12px;line-height:1.45;color:#333">Copia el bloque de ventas de tu Excel y p\u00E9galo (Ctrl+V) en esta p\u00E1gina. ' +
-        'El script llena fecha, autoconsumo y las filas de Auto-tanque y Recipientes, y verifica cada campo.<br><br>' +
-        'Tipo de p\u00E1gina: <b>' + (esPaginaDisPla ? 'Distribuidor por Planta' : 'Estaci\u00F3n de Servicio') + '</b></div>';
+        'El script llena fecha, autoconsumo y las filas de Auto-tanque y Recipientes, y verifica cada campo. ' +
+        'Si pegas el REPORTE completo, aparece la lista de estaciones para subirlas una por una.<br><br>' +
+        'Tipo de p\u00E1gina: <b>' + (esPaginaDisPla ? 'Distribuidor por Planta' : 'Estaci\u00F3n de Servicio') + '</b></div>' +
+        '<div id="siretrac-venta-estaciones"></div>' +
+        '<div id="siretrac-venta-cola"></div>';
+
+    // Última pega del REPORTE: la usa el botón de la tabla de estaciones.
+    var estacionesPegadas = [];
+    var fechasPegadas = [];
 
     function norm(s) {
         return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
@@ -4407,6 +4417,11 @@
                 continue;
             }
             if (!noVacias.length || esCab) continue;
+            // El REPORTE completo sigue con los bloques de estación: no son recipientes.
+            var primeraRec = norm(noVacias[0]);
+            if (primeraRec.indexOf('cap.') === 0 || primeraRec.indexOf('tipo de permiso') === 0 ||
+                primeraRec.indexOf('sucursal') === 0 || primeraRec.indexOf('venta litros') === 0 ||
+                primeraRec.indexOf('entrada por traspaso') === 0) break;
             if (nums.length >= 3 && nums.length % 3 === 0) {
                 res.recipientes.lineas.push({ celdas: c, nums: nums.map(aNumero) });
             } else if (hayDash) {
@@ -4414,6 +4429,167 @@
             }
         }
         return res;
+    }
+
+    // --- REPORTE completo: un bloque por estación ---------------------------
+    // Cada estación trae 3-4 filas de metadatos (CAP, TIPO DE PERMISO, N° DE
+    // PERMISO, SUCURSAL), la fila del nombre y VENTA LITROS, seguida de
+    // ENTRADA POR TRASPASO KILOS. Se tolera que falte alguna fila.
+    function esNombreEstacion(v) {
+        if (!v || esNumero(v) || esDash(v)) return false;
+        var n = norm(v);
+        if (/^lp\//.test(n) || /^\d{4,6}$/.test(v)) return false;
+        if (n.indexOf('estacion de servi') === 0 || n.indexOf('estacion de distribu') === 0) return false;
+        if (n.indexOf('cap.') === 0 || n.indexOf('tipo de permiso') === 0) return false;
+        if (n.indexOf('de permiso') >= 0 || n.indexOf('sucursal') === 0) return false;
+        if (n === 'volumen' || n === 'precio' || n === 'importe') return false;
+        if (n.indexOf('entrada por traspaso') === 0 || n.indexOf('venta litros') === 0) return false;
+        if (n.indexOf('sin fecha') === 0) return false;
+        return true;
+    }
+
+    function nombreEstacion(filas) {
+        var i, j, k;
+        // El nombre suele ser la celda "ESTACION ..." más cercana al bloque.
+        for (i = filas.length - 1; i >= 0; i--) {
+            for (j = 0; j < filas[i].length; j++) {
+                if (esNombreEstacion(filas[i][j]) && /^estacion/i.test(norm(filas[i][j]))) return filas[i][j];
+            }
+        }
+        // Respaldo: el valor que sigue a la etiqueta SUCURSAL.
+        for (i = 0; i < filas.length; i++) {
+            for (j = 0; j < filas[i].length; j++) {
+                if (norm(filas[i][j]).indexOf('sucursal') !== 0) continue;
+                for (k = j + 1; k < filas[i].length; k++) {
+                    if (filas[i][k] !== '') return esNombreEstacion(filas[i][k]) ? filas[i][k] : '';
+                }
+            }
+        }
+        // Último respaldo: cualquier texto que no sea etiqueta ni número.
+        for (i = filas.length - 1; i >= 0; i--) {
+            for (j = 0; j < filas[i].length; j++) {
+                if (esNombreEstacion(filas[i][j])) return filas[i][j];
+            }
+        }
+        return '';
+    }
+
+    function permisoDeEstacion(filas) {
+        var i, j;
+        for (i = filas.length - 1; i >= 0; i--) {
+            for (j = 0; j < filas[i].length; j++) {
+                var m = /(LP\/[A-Za-z0-9]+(?:\/[A-Za-z0-9]+)*)/i.exec(filas[i][j]);
+                if (m) return m[1];
+            }
+        }
+        // Respaldo: número de permiso de 4-6 dígitos. La celda debe ser sólo
+        // el número para no confundirlo con textos como "4,913 LTS.".
+        for (i = filas.length - 1; i >= 0; i--) {
+            for (j = 0; j < filas[i].length; j++) {
+                if (/^\d{4,6}$/.test(filas[i][j])) return filas[i][j];
+            }
+        }
+        return '';
+    }
+
+    function valorTrasEtiqueta(celdas, etiqueta) {
+        for (var i = 0; i < celdas.length; i++) {
+            if (norm(celdas[i]).indexOf(etiqueta) !== 0) continue;
+            for (var j = i + 1; j < celdas.length; j++) {
+                if (celdas[j] !== '') return celdas[j];
+            }
+        }
+        return '';
+    }
+
+    function tipoDeEstacion(filas) {
+        var i, j;
+        for (i = filas.length - 1; i >= 0; i--) {
+            var v = valorTrasEtiqueta(filas[i], 'tipo de permiso');
+            if (v) return v;
+        }
+        for (i = filas.length - 1; i >= 0; i--) {
+            for (j = filas[i].length - 1; j >= 0; j--) {
+                var n = norm(filas[i][j]);
+                if (n.indexOf('estacion de servi') === 0 || n.indexOf('estacion de distribu') === 0 || n.indexOf('planta') === 0) {
+                    return filas[i][j];
+                }
+            }
+        }
+        return '';
+    }
+
+    function sucursalDeEstacion(filas) {
+        for (var i = filas.length - 1; i >= 0; i--) {
+            var v = valorTrasEtiqueta(filas[i], 'sucursal');
+            if (v) return v;
+        }
+        return '';
+    }
+
+    function ventasDeEstacion(celdas) {
+        var vals = celdas.slice(1).filter(celdaValorES);
+        var res = [];
+        for (var i = 0; i + 2 < vals.length && res.length < 7; i += 3) {
+            res.push({ vol: vals[i], precio: vals[i + 1], imp: vals[i + 2] });
+        }
+        return res;
+    }
+
+    function traspasosDeEstacion(celdas) {
+        return celdas.slice(1).filter(esNumero).map(aNumero).slice(0, 7);
+    }
+
+    function parsearEstaciones(texto) {
+        var lineas = texto.split(/\r?\n/);
+        var res = [];
+        var previas = [];
+        for (var i = 0; i < lineas.length; i++) {
+            var c = cells(lineas[i]);
+            var noVacias = c.filter(function (x) { return x !== ''; });
+            if (!noVacias.length) continue;
+            var primer = norm(noVacias[0]);
+            if (primer.indexOf('venta litros') === 0) {
+                var meta = previas.slice(-3);
+                var recientes = previas.slice(-4);
+                res.push({
+                    nombre: nombreEstacion(meta),
+                    permiso: permisoDeEstacion(recientes),
+                    tipo: tipoDeEstacion(recientes),
+                    sucursal: sucursalDeEstacion(meta),
+                    ventas: ventasDeEstacion(c),
+                    traspasos: []
+                });
+                continue;
+            }
+            if (primer.indexOf('entrada por traspaso') === 0) {
+                if (res.length) res[res.length - 1].traspasos = traspasosDeEstacion(c);
+                continue;
+            }
+            previas.push(c);
+            if (previas.length > 6) previas.shift();
+        }
+        return res;
+    }
+
+    function parsearReporte(texto) {
+        return { municipios: parsear(texto), estaciones: parsearEstaciones(texto) };
+    }
+
+    function colaDeEstaciones(estaciones, fechas) {
+        var semana = (fechas || []).slice(0, 7);
+        var cola = [];
+        for (var i = 0; i < (estaciones || []).length; i++) {
+            var e = estaciones[i];
+            if (!e || !e.permiso) continue;
+            cola.push({
+                permiso: e.permiso,
+                nombre: e.nombre,
+                fechas: semana.slice(),
+                ventas: (e.ventas || []).slice(0, 7)
+            });
+        }
+        return cola;
     }
 
     function elegirColumna(fechas, fechaActual) {
@@ -4965,19 +5141,221 @@
         location.reload();
     }
 
+    function escHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function pintarEstaciones(estaciones, fechas) {
+        estacionesPegadas = estaciones || [];
+        fechasPegadas = fechas || [];
+        var cont = document.getElementById('siretrac-venta-estaciones');
+        if (!cont) return;
+        if (!estacionesPegadas.length) {
+            cont.innerHTML = '';
+            return;
+        }
+        var html = '<div class="et-grid-wrap" style="max-height:30vh;margin-bottom:6px;overflow:auto">' +
+            '<table class="et-grid" style="font-size:12px"><thead><tr>' +
+            '<th>Estación</th><th>Permiso</th><th>Días</th><th>Traspasos</th>' +
+            '</tr></thead><tbody>';
+        for (var i = 0; i < estacionesPegadas.length; i++) {
+            var e = estacionesPegadas[i];
+            html += '<tr><td>' + escHtml(e.nombre || '(sin nombre)') + '</td>' +
+                '<td>' + escHtml(e.permiso || '-') + '</td>' +
+                '<td>' + (e.ventas ? e.ventas.length : 0) + '</td>' +
+                '<td>' + (e.traspasos ? e.traspasos.length : 0) + '</td></tr>';
+        }
+        html += '</tbody></table></div>' +
+            '<button id="siretrac-venta-subir" type="button" style="width:100%;padding:7px 10px;' +
+            'border:1px solid var(--ui-border-strong);background:var(--ui-primary);color:#fff;' +
+            'border-radius:0;cursor:pointer;font:400 12px/1 var(--ui-font)">Subir todas las estaciones</button>';
+        cont.innerHTML = html;
+        var boton = document.getElementById('siretrac-venta-subir');
+        if (boton) boton.addEventListener('click', subirTodas);
+    }
+
+    // Una cola viva se reanuda sola en cada página ES. Este botón es la única
+    // salida si algo salió mal: sin él, abrir la página vuelve a registrar.
+    function pintarCola() {
+        var cont = document.getElementById('siretrac-venta-cola');
+        if (!cont) return;
+        var cola = ET.store.get('venta.cola', []);
+        if (!Array.isArray(cola) || !cola.length) { cont.innerHTML = ''; return; }
+        cont.innerHTML = '<div style="margin-top:8px;padding:8px;border:1px solid var(--ui-border-strong);font-size:12px">' +
+            'Cola pendiente: ' + cola.length + ' estación(es). Siguiente: ' +
+            escHtml(cola[0].nombre || cola[0].permiso) + '.</div>' +
+            '<button id="siretrac-venta-detener" type="button" style="width:100%;margin-top:6px;padding:7px 10px;' +
+            'border:1px solid var(--ui-danger);background:var(--ui-danger);color:#fff;border-radius:0;' +
+            'cursor:pointer;font:400 12px/1 var(--ui-font)">Detener la cola</button>';
+        var boton = document.getElementById('siretrac-venta-detener');
+        if (boton) boton.addEventListener('click', function () {
+            if (!window.confirm('¿Descartar la cola? Lo ya registrado no se toca; lo pendiente no se sube.')) return;
+            ET.store.del('venta.cola');
+            ET.store.del('venta.cola.auto');
+            pintarCola();
+        });
+    }
+
+    function resolverUrlPermiso(codigo) {
+        if (typeof fetch !== 'function') return Promise.resolve(null);
+        return fetch('/OrdenDePedido/Permisos', { credentials: 'include' })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                var lista = ET.core.permisos.escanearPermisos(html);
+                var buscado = norm(codigo);
+                for (var i = 0; i < lista.length; i++) {
+                    var p = lista[i];
+                    var url = p.url || '';
+                    var enUrl = false;
+                    try {
+                        enUrl = norm(decodeURIComponent(url)).indexOf(buscado) >= 0;
+                    } catch (e) {
+                        enUrl = norm(url).indexOf(buscado) >= 0;
+                    }
+                    if (norm(p.codigo) === buscado || enUrl) return url;
+                }
+                return null;
+            });
+    }
+
+    function subirTodas() {
+        var cola = colaDeEstaciones(estacionesPegadas, fechasPegadas);
+        if (!cola.length) {
+            alert('Ninguna estación del bloque tiene permiso (LP/... o número). No hay nada que subir.');
+            return;
+        }
+        if (!fechasPegadas.length) {
+            alert('No se encontraron las fechas de la semana en el bloque. Sin fechas no se puede registrar.');
+            return;
+        }
+        var sinPermiso = 0;
+        for (var i = 0; i < estacionesPegadas.length; i++) {
+            if (!estacionesPegadas[i].permiso) sinPermiso++;
+        }
+        var listado = cola.map(function (e) {
+            return (e.nombre || '(sin nombre)') + ' -> ' + e.permiso;
+        }).join('\n');
+        var mensaje = 'Se registrarán ' + cola.length + ' estación(es) en este orden:\n\n' + listado;
+        if (sinPermiso) mensaje += '\n\nSe omiten ' + sinPermiso + ' estación(es) sin permiso.';
+        mensaje += '\n\nLos días en cero o con "-" se registrarán como "Sin venta".\n\n¿Continuar?';
+        if (!window.confirm(mensaje)) return;
+        resolverUrlPermiso(cola[0].permiso).then(function (url) {
+            if (!url) {
+                alert('No se encontró el permiso ' + cola[0].permiso + ' en /OrdenDePedido/Permisos.\n\n' +
+                    'No se navegó ni se guardó la cola.');
+                return;
+            }
+            ET.store.set('venta.cola', cola);
+            ET.store.set('venta.cola.auto', true);
+            location.href = url;
+        }).catch(function () {
+            alert('No se pudo consultar la lista de permisos. No se navegó ni se guardó la cola.');
+        });
+    }
+
+    // La página ES no expone el permiso activo. La cabeza de la cola es la
+    // fuente de verdad: es la estación a la que se navegó y se va a registrar.
+    async function reanudarCola() {
+        var cola = ET.store.get('venta.cola', []);
+        if (!Array.isArray(cola) || !cola.length) return;
+        if ($('#ShowbtonsGuardar').is(':visible')) {
+            alert('Hay una cola de ventas pendiente, pero la página está en la pantalla de confirmación.\n' +
+                'Pulsa "Regresar" y recarga para continuar.');
+            return;
+        }
+        var est = cola[0];
+        // Solo sigue sola si venimos de una navegación nuestra; si alguien
+        // abre una página ES con una cola vieja, se le pregunta antes de escribir.
+        var auto = ET.store.get('venta.cola.auto', false) === true;
+        ET.store.del('venta.cola.auto');
+        if (!auto && !window.confirm('Hay una subida pendiente: ' + cola.length + ' estación(es).\n\n' +
+            'Siguiente: ' + (est.nombre || est.permiso) + '.\n\n¿Continuar ahora?')) return;
+        if (!est || !est.permiso) {
+            alert('La cola de ventas no tiene permiso en la primera estación. Se detiene para no registrar en la estación equivocada.');
+            return;
+        }
+        var total = Math.min((est.fechas || []).length, (est.ventas || []).length);
+        if (!total) {
+            alert('La estación ' + (est.nombre || est.permiso) + ' de la cola no tiene fechas o ventas. Se detiene.');
+            return;
+        }
+        var resultados = [];
+        for (var i = 0; i < total; i++) {
+            var fecha = est.fechas[i];
+            var colVenta = est.ventas[i];
+            var ya = await fechaYaRegistrada(fecha);
+            if (ya) {
+                resultados.push(fecha + ': ya registrada, se omite');
+                continue;
+            }
+            toast(['Registrando ' + (est.nombre || est.permiso) + ' - día ' + (i + 1) + ' de ' + total + ': ' + fecha + '...']);
+            pintarEstadoDia(fecha, colVenta);
+            var r = await registrarDiaES(fecha, colVenta);
+            if (String(r).indexOf('ERROR:') === 0) {
+                alert('No se pudo registrar ' + (est.nombre || est.permiso) + ':\n' + fecha + ': ' + r +
+                    '\n\nLa cola se conserva. Detente y revisa antes de continuar.');
+                return;
+            }
+            resultados.push(fecha + ': ' + r);
+            await sleep(800);
+        }
+        cola.shift();
+        if (!cola.length) {
+            ET.store.del('venta.cola');
+            ET.store.del('venta.cola.auto');
+            alert('Registro completado.\n\n' + resultados.join('\n'));
+            return;
+        }
+        // Si no se resuelve el siguiente permiso no se guarda el avance: la
+        // cola original sigue y los días ya registrados se omiten al reintentar.
+        resolverUrlPermiso(cola[0].permiso).then(function (url) {
+            if (!url) {
+                alert('Estación ' + (est.nombre || est.permiso) + ' registrada.\n\n' +
+                    'No se encontró el siguiente permiso ' + cola[0].permiso + '.\n' +
+                    'La cola se conserva sin cambios; recarga en una página ES para reintentar.');
+                return;
+            }
+            ET.store.set('venta.cola', cola);
+            ET.store.set('venta.cola.auto', true);
+            alert('Estación ' + (est.nombre || est.permiso) + ' registrada.\n\n' + resultados.join('\n') +
+                '\n\nSiguiente: ' + (cola[0].nombre || cola[0].permiso) + ' (' + cola[0].permiso + ').');
+            location.href = url;
+        }).catch(function () {
+            alert('Estación ' + (est.nombre || est.permiso) + ' registrada, pero no se pudo consultar la lista de permisos.\n' +
+                'La cola se conserva sin cambios.');
+        });
+    }
+
     document.addEventListener('paste', function (e) {
         var cd = e.clipboardData || window.clipboardData;
         var texto = cd ? cd.getData('text/plain') : '';
         if (!texto || texto.indexOf('\t') < 0) return;
 
-        if (esPaginaDisPla) {
-            var p = parsear(texto);
-            var lineasVenta = 0;
-            p.bloques.forEach(function (b) { lineasVenta += b.lineas.length; });
-            if (!p.fechas.length || lineasVenta < 4) return;
+        var reporte = parsearReporte(texto);
+        if (reporte.estaciones.length) {
             e.preventDefault();
             e.stopPropagation();
-            llenar(texto, p);
+            pintarEstaciones(reporte.estaciones, reporte.municipios.fechas);
+            if (esPaginaDisPla) {
+                var p = reporte.municipios;
+                var lineasVenta = 0;
+                p.bloques.forEach(function (b) { lineasVenta += b.lineas.length; });
+                if (p.fechas.length && lineasVenta >= 4) llenar(texto, p);
+            }
+            return;
+        }
+
+        pintarEstaciones([], []);
+
+        if (esPaginaDisPla) {
+            var p2 = parsear(texto);
+            var lineasVenta2 = 0;
+            p2.bloques.forEach(function (b) { lineasVenta2 += b.lineas.length; });
+            if (!p2.fechas.length || lineasVenta2 < 4) return;
+            e.preventDefault();
+            e.stopPropagation();
+            llenar(texto, p2);
             return;
         }
 
@@ -4989,6 +5367,9 @@
             fillES(texto, pe);
         }
     });
+
+    pintarCola();
+    if (esPaginaES) reanudarCola();
 
   ET.venta = ET.venta || {};
 })();

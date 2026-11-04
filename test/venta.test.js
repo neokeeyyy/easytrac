@@ -2,7 +2,7 @@
 
 const test = require('bun:test').test;
 const assert = require('node:assert');
-const { norm, parsear, resolverFilas, valoresDeLinea } = require('../src/40-venta.js');
+const { norm, parsear, parsearEstaciones, parsearReporte, colaDeEstaciones, resolverFilas, valoresDeLinea } = require('../src/40-venta.js');
 const { readFileSync } = require('node:fs');
 
 
@@ -177,6 +177,102 @@ test('bloque semanal de 7 dias: toma el dia elegido y no descarta la fila', () =
   assert.equal(res.bloques.length, 1);
   assert.equal(res.bloques[0].nombre, 'PUEBLA');
   assert.equal(res.bloques[0].lineas[0].nums.length, 21);
+});
+
+test('parsearEstaciones: nombres y permisos de las 8 estaciones del REPORTE', () => {
+  const texto = readFileSync(__dirname + '/fixtures/venta-reporte.txt', 'utf8');
+  const est = parsearEstaciones(texto);
+
+  assert.equal(est.length, 8);
+  assert.deepEqual(est.map((e) => e.nombre), [
+    'ESTACION A', 'ESTACION B', 'ESTACION C', 'ESTACION D',
+    'ESTACION E', 'ESTACION F', 'ESTACION G', 'ESTACION H',
+  ]);
+  assert.deepEqual(est.map((e) => e.permiso), [
+    'LP/14432/DIST/PLA/2016',
+    'LP/16140/EXP/ES/2016',
+    'LP/16385',
+    'LP/16723',
+    'LP/17331',
+    'LP/17563',
+    'LP/17590',
+    '',
+  ]);
+  assert.equal(est[0].tipo, 'ESTACIÓN DE SERVICO');
+  assert.equal(est[0].sucursal, 'ESTACION A');
+});
+
+test('parsearEstaciones: 7 ventas y 7 traspasos, y días con guiones', () => {
+  const texto = readFileSync(__dirname + '/fixtures/venta-reporte.txt', 'utf8');
+  const est = parsearEstaciones(texto);
+
+  assert.equal(est[0].ventas.length, 7);
+  assert.deepEqual(est[0].ventas[0], { vol: '100', precio: '11.40', imp: '1140.00' });
+  assert.deepEqual(est[0].ventas[6], { vol: '160', precio: '11.40', imp: '1824.00' });
+  assert.deepEqual(est[0].traspasos, [120, 130, 140, 150, 160, 170, 180]);
+
+  assert.equal(est[1].ventas.length, 7);
+  assert.ok(est[1].ventas.every((v) => v.vol === '-' && v.precio === '-' && v.imp === '-'));
+});
+
+test('parsearReporte: municipios y estaciones conviven en el bloque completo', () => {
+  const texto = readFileSync(__dirname + '/fixtures/venta-reporte.txt', 'utf8');
+  const r = parsearReporte(texto);
+
+  assert.equal(r.municipios.bloques.length, 5);
+  assert.equal(r.municipios.bloques[4].nombre, 'PUEBLA');
+  assert.deepEqual(r.municipios.fechas, [
+    '01/12/2025', '02/12/2025', '03/12/2025', '04/12/2025',
+    '05/12/2025', '06/12/2025', '07/12/2025',
+  ]);
+  assert.equal(r.estaciones.length, 8);
+  assert.equal(r.municipios.recipientes.lineas.length, 1);
+  assert.equal(r.municipios.recipientes.lineas[0].nums.length, 3);
+});
+
+test('colaDeEstaciones: omite estaciones sin permiso y arrastra la semana', () => {
+  const texto = readFileSync(__dirname + '/fixtures/venta-reporte.txt', 'utf8');
+  const r = parsearReporte(texto);
+  const cola = colaDeEstaciones(r.estaciones, r.municipios.fechas);
+
+  assert.equal(cola.length, 7);
+  assert.ok(cola.every((e) => e.permiso));
+  assert.ok(!cola.some((e) => e.nombre === 'ESTACION H'));
+  assert.deepEqual(cola[0].fechas, r.municipios.fechas);
+  assert.equal(cola[0].ventas.length, 7);
+  assert.equal(cola[6].permiso, 'LP/17590');
+});
+
+test('parsearEstaciones: permiso numérico y nombre fuera de la etiqueta SUCURSAL', () => {
+  const texto = [
+    'TIPO DE PERMISO:\t\tPLANTA',
+    'N° DE PERMISO:\t\t12345',
+    'SUCURSAL:\tPLANTA NORTE',
+    'VENTA LITROS\t\t\t1\t2\t3',
+  ].join('\n');
+  const est = parsearEstaciones(texto);
+
+  assert.equal(est.length, 1);
+  assert.equal(est[0].permiso, '12345');
+  assert.equal(est[0].nombre, 'PLANTA NORTE');
+});
+
+test('parsearEstaciones: nombre en fila aparte y TIPO en la cuarta fila anterior', () => {
+  const texto = [
+    'CAP. AL 100% 4,913 LTS.\t\t\t\t4,913',
+    'TIPO DE PERMISO:\t\tESTACIÓN DE SERVICIO',
+    'N° DE PERMISO:\t\t99887',
+    'SUCURSAL:\tCENTRAL',
+    'ESTACION NORTE',
+    'VENTA LITROS\t\t\t1\t2\t3',
+  ].join('\n');
+  const est = parsearEstaciones(texto);
+
+  assert.equal(est.length, 1);
+  assert.equal(est[0].nombre, 'ESTACION NORTE');
+  assert.equal(est[0].permiso, '99887');
+  assert.equal(est[0].tipo, 'ESTACIÓN DE SERVICIO');
+  assert.equal(est[0].sucursal, 'CENTRAL');
 });
 
 
