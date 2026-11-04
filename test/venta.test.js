@@ -2,7 +2,9 @@
 
 const test = require('bun:test').test;
 const assert = require('node:assert');
-const { norm, resolverFilas, valoresDeLinea } = require('../src/40-venta.js');
+const { norm, parsear, resolverFilas, valoresDeLinea } = require('../src/40-venta.js');
+const { readFileSync } = require('node:fs');
+
 
 function fila(id, estado, municipio, sector) {
   return { idVenta: id, entidadFederativa: estado, municipio: municipio, sector: sector || 'Comercial y Servicio' };
@@ -133,3 +135,48 @@ test('estado fuera de la lista ESTADOS: iguala contra la tabla de la empresa', (
 
   assert.deepEqual(r.asignaciones.map((a) => a.fila.idVenta), [3, 2]);
 });
+
+test('parsear reconoce las estaciones por forma de fila, sin lista de estados', () => {
+  const texto = readFileSync(__dirname + '/fixtures/venta-dia.txt', 'utf8');
+  const res = parsear(texto);
+
+  // Cinco municipios, el quinto (Puebla) fuera de la antigua lista y fuera del
+  // tope de 4 bloques: antes el quinto cabecera se tomaba por recipientes.
+  assert.equal(res.bloques.length, 5);
+  assert.deepEqual(
+    res.bloques.map((b) => [b.nombre, b.municipio]),
+    [
+      ['GUANAJUATO', 'SAN FELIPE'],
+      ['ZACATECAS', 'PINOS'],
+      ['SAN LUIS POTOSI', 'VILLA DE ARRIAGA'],
+      ['JALISCO', 'OJUELOS DE JALISCO'],
+      ['PUEBLA', 'CHOLULA'],
+    ]
+  );
+  assert.deepEqual(res.bloques[4].lineas.map((l) => l.nums), [
+    [700, 11, 7700],
+    [2500, 11, 27500],
+  ]);
+  assert.deepEqual(res.totalLitros, [10000]);
+  assert.deepEqual(res.autoconsumo, [100]);
+  assert.equal(res.recipientes.lineas.length, 1);
+});
+
+test('bloque semanal de 7 dias: toma el dia elegido y no descarta la fila', () => {
+  const nums = [];
+  for (let d = 1; d <= 7; d++) nums.push(d * 100, 11.5, d * 1000);
+  assert.deepEqual(valoresDeLinea(nums, 2), { vol: 300, imp: 3000 });
+  assert.deepEqual(valoresDeLinea([745, 11.44, 8520.34], 0), { vol: 745, imp: 8520.34 });
+  assert.equal(valoresDeLinea(nums, 7), null);
+
+  const texto = [
+    'MUNICIPIO\tLOCALIDAD\tSEGMENTO\tVOLUMEN\tPRECIO\tIMPORTE',
+    ['PUEBLA', 'CHOLULA', 'COMERCIAL'].concat(nums).join('\t'),
+  ].join('\n');
+  const res = parsear(texto);
+  assert.equal(res.bloques.length, 1);
+  assert.equal(res.bloques[0].nombre, 'PUEBLA');
+  assert.equal(res.bloques[0].lineas[0].nums.length, 21);
+});
+
+

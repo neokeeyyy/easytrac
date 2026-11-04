@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.23'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.24'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -4278,12 +4278,12 @@
     var RE_FECHA = /^(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo),\s*(\d{1,2})\s+de\s+([a-záéíóúñü]+)\s+de\s+(\d{4})$/i;
     var MESES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
     var SECTORES = { comercial: 'Comercial y Servicio', 'comercial y servicio': 'Comercial y Servicio', residencial: 'Residencial' };
-    var ESTADOS = ['guanajuato', 'zacatecas', 'san luis potosi', 'jalisco', 'aguascalientes', 'nuevo leon', 'coahuila', 'tamaulipas', 'veracruz', 'michoacan', 'queretaro', 'hidalgo', 'mexico', 'ciudad de mexico', 'durango', 'chihuahua', 'sonora', 'sinaloa', 'nayarit', 'colima'];
     // Sin jQuery no hay página: las funciones puras se prueban en Node y se
     // exportan aquí porque el archivo retorna antes de montar la UI.
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             norm: norm,
+            parsear: parsear,
             sectorDesdeCelda: sectorDesdeCelda,
             valoresDeLinea: valoresDeLinea,
             resolverFilas: resolverFilas
@@ -4362,6 +4362,8 @@
                 if (f) res.fechas.push(f);
             }
             var esCab = c.some(function (x) { return norm(x) === 'volumen'; });
+            // La cabecera de la matriz municipal nombra MUNICIPIO; la de recipientes no.
+            var esCabMunicipio = esCab && c.some(function (x) { return norm(x) === 'municipio'; });
             var nums = c.filter(esNumero);
             var hayDash = c.some(esDash);
             if (fase === 'totales') {
@@ -4379,17 +4381,19 @@
             }
             if (fase === 'bloques') {
                 if (!noVacias.length) continue;
-                if (esCab && nBloques < 4) {
+                if (esCab && esCabMunicipio) {
                     seccion = { nombre: null, municipio: null, lineas: [] };
                     res.bloques.push(seccion);
                     nBloques++;
                     continue;
                 }
                 if (esCab) { fase = 'recipientes'; continue; }
-                if (nums.length === 2 && nBloques >= 4) { res.filaTotal = nums.map(aNumero); fase = 'recipientes'; continue; }
-                if (nums.length === 3 || nums.length === 6) {
+                if (nums.length === 2 && nBloques >= 1) { res.filaTotal = nums.map(aNumero); fase = 'recipientes'; continue; }
+                if (nums.length >= 3 && nums.length % 3 === 0) {
                     if (!seccion.primera && c[0] !== '') seccion.primera = c[0];
-                    if (ESTADOS.indexOf(norm(c[0])) >= 0 && c[0] !== '') {
+                    // Nombre de la estación por forma: la primera celda de texto de la
+                    // sección es el municipio. Sirve cualquier entidad, sin lista fija.
+                    if (!seccion.nombre && c[0] !== '' && !esNumero(c[0])) {
                         seccion.nombre = c[0];
                         seccion.municipio = c[1] || '';
                     }
@@ -4403,7 +4407,7 @@
                 continue;
             }
             if (!noVacias.length || esCab) continue;
-            if (nums.length === 3 || nums.length === 6) {
+            if (nums.length >= 3 && nums.length % 3 === 0) {
                 res.recipientes.lineas.push({ celdas: c, nums: nums.map(aNumero) });
             } else if (hayDash) {
                 res.recipientes.lineas.push({ sinVenta: true });
@@ -4424,9 +4428,10 @@
     }
 
     function valoresDeLinea(nums, col) {
-        if (nums.length === 3) return { vol: nums[0], imp: nums[2] };
-        if (nums.length === 6) return { vol: nums[col * 3], imp: nums[col * 3 + 2] };
-        return null;
+        // Un bloque semanal trae 3 columnas por día: se elige la del día que se registra.
+        var c = nums.length === 3 ? 0 : (col || 0);
+        if (nums.length < 3 || nums.length % 3 !== 0 || c * 3 + 2 >= nums.length) return null;
+        return { vol: nums[c * 3], imp: nums[c * 3 + 2] };
     }
 
     function toast(mensajes) {
