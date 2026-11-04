@@ -475,6 +475,20 @@
       return p;
     }
 
+    // Adelanta los PDFs en segundo plano: el hover y el ZIP ya los encuentran en pdfCache.
+    // 3 a la vez con pausa, para no competir con el resto de la página; nunca bloquea la UI.
+    let prefetchToken = 0;
+    function prefetch(lista) {
+      const token = ++prefetchToken;
+      const pend = lista.filter(r => !r.error && r.it && r.it.idAcuse && !pdfCache.has(r.it.idAcuse));
+      if (!pend.length) return;
+      pool(pend, 3, async r => {
+        if (token !== prefetchToken) return;
+        try { await pdfDe(r.it); } catch (e) { /* queda el reintento al descargar */ }
+        await sleep(200);
+      });
+    }
+
     async function pideCadena(it, intentos = 3) {
       for (let i = 0; i < intentos; i++) {
         try {
@@ -693,6 +707,7 @@
       st('Listo: ' + filas.length + ' acuses · ' + sel.size + ' seleccionados' +
         (nAprox ? ' · ' + nAprox + ' con fecha aprox.' : '') +
         (AVISOS.length ? ' · ' + AVISOS.length + ' aviso(s)' : ''));
+      prefetch(filas);
     }
 
     // ---------- Selección y filtro ----------
@@ -964,6 +979,7 @@
       ctrl = new AbortController();
       filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0;
       pdfCache.clear(); pdfProm.clear();
+      prefetchToken++;
       $('#sa-lista').innerHTML = '';
       ocultarTip();
       cerrarPrev();
@@ -1145,7 +1161,7 @@
 
     function programarPrev(n) {
       clearTimeout(prevTimer);
-      prevTimer = setTimeout(() => abrirPrev(n), 320);
+      prevTimer = setTimeout(() => abrirPrev(n), 160);
     }
 
     prev.addEventListener('mouseenter', () => {
