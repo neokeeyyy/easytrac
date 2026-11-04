@@ -974,12 +974,12 @@
     const css = `
       #sa-panel{background:#fff;color:#333;font:12px var(--ui-font)}
       #sa-panel *{box-sizing:border-box}
-      #sa-panel .sa-grilla{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 6px;align-items:center}
-      #sa-panel .sa-lb{font-size:10px;font-weight: 400;color:#706F6F;text-align:right;white-space:nowrap;line-height:18px}
-      #sa-panel .sa-f{width:100%;height:20px;padding:0 4px;font:11px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0}
+      #sa-panel .sa-grilla{display:grid;grid-template-columns:48px minmax(0,1fr);gap:3px 6px;align-items:center}
+      #sa-panel .sa-lb{font-size:11px;font-weight: 400;color:#706F6F;text-align:right;white-space:nowrap;line-height:24px}
+      #sa-panel .sa-f{width:100%;min-width:0;height:24px;padding:0 5px;font:12px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0}
       #sa-panel .sa-f:focus{outline:1px solid #66afe9;border-color:#66afe9}
       #sa-panel .sa-btns{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:6px 0}
-      #sa-panel .sa-btn{height:22px;padding:0 4px;font:400 11px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      #sa-panel .sa-btn{height:26px;padding:0 4px;font:400 12px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       #sa-panel .sa-btn:hover{background:#e5e5e5}
       #sa-panel .sa-btn:active{background:#ddd}
       #sa-panel .sa-btn:focus{outline:1px solid #66afe9}
@@ -987,12 +987,12 @@
       #sa-panel .sa-btn.go:hover{border-color:#333}
       #sa-panel .sa-btn.stop{color:#C60C0E;border-color:#C60C0E}
       #sa-panel .sa-filtro{display:flex;gap:5px;align-items:center;margin-bottom:3px}
-      #sa-panel .sa-bus{flex:1 1 auto;min-width:0;height:20px;padding:0 4px;font:11px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0}
+      #sa-panel .sa-bus{flex:1 1 auto;min-width:0;height:24px;padding:0 5px;font:12px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0}
       #sa-panel .sa-bus:focus{outline:1px solid #66afe9;border-color:#66afe9}
-      #sa-panel .sa-cuenta{flex:none;font-size:10px;color:#706F6F;white-space:nowrap}
+      #sa-panel .sa-cuenta{flex:none;font-size:11px;color:#706F6F;white-space:nowrap}
       #sa-panel .sa-lista{height:52vh;min-height:140px;overflow:auto;border-top:1px solid #ddd;border-bottom:1px solid #ddd;background:#fff;outline:none;user-select:none;-webkit-user-select:none}
       #sa-panel .sa-lista:focus{outline:1px solid #66afe9}
-      #sa-panel .sa-i{height:20px;line-height:19px;padding:0 5px;font:11px/19px var(--ui-font);color:#333;border-bottom:1px solid #e5e5e5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;outline:none}
+      #sa-panel .sa-i{height:24px;line-height:23px;padding:0 6px;font:12px/23px var(--ui-font);color:#333;border-bottom:1px solid #e5e5e5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;outline:none}
       #sa-panel .sa-i:hover{background:#e5e5e5}
       #sa-panel .sa-i.sa-foc{background:#e5e5e5}
       #sa-panel .sa-i.sa-on{box-shadow:inset 3px 0 0 #2EA836;font-weight: 400}

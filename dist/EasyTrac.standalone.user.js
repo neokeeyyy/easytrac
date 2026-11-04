@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.7
+// @version      1.0.8
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -389,21 +389,30 @@
   if (ET.ui && ET.ui.tab) return;
 
   var CSS =
+    /* Soft spring: overshoots ~5% and settles. One curve for everything that moves. */
+    ':root{--shub-spring:cubic-bezier(.34,1.4,.64,1);--shub-ease:cubic-bezier(.2,.8,.2,1);}' +
     '#shub-root{position:fixed;top:0;right:0;bottom:0;width:var(--shub-w,470px);z-index:2147483000;display:flex;flex-direction:column;' +
-    'background:var(--ui-bg);border-left:1px solid var(--ui-muted);font:400 14px/1.43 var(--ui-font);color:var(--ui-fg);}' +
+    'background:var(--ui-bg);border-left:1px solid var(--ui-muted);font:400 14px/1.43 var(--ui-font);color:var(--ui-fg);' +
+    'transition:width 260ms var(--shub-spring);}' +
     '#shub-root *{box-sizing:border-box;}' +
     '#shub-head{background:var(--ui-header);color:#fff;padding:9px 12px;font-size:15px;display:flex;justify-content:space-between;' +
     'align-items:center;user-select:none;min-height:42px;}' +
     '#shub-head button{background:#fff;border:1px solid var(--ui-border-input);color:var(--ui-fg);width:28px;height:24px;' +
-    'cursor:pointer;border-radius:0;line-height:1;font:inherit;}' +
+    'cursor:pointer;border-radius:0;line-height:1;font:inherit;transition:transform 180ms var(--shub-spring);}' +
+    '#shub-head button:active{transform:scale(.88);}' +
     '#shub-tabs{display:flex;flex-wrap:wrap;background:var(--ui-bg);border-bottom:1px solid var(--ui-border-strong);}' +
-    '.shub-tab{background:none;border:none;border-bottom:2px solid transparent;padding:9px 14px;cursor:pointer;' +
-    'color:var(--ui-muted);font:inherit;font-size:13px;text-transform:uppercase;letter-spacing:.04em;}' +
+    '.shub-tab{background:none;border:none;border-bottom:2px solid transparent;padding:8px 7px;cursor:pointer;' +
+    'color:var(--ui-muted);font:inherit;font-size:12px;text-transform:uppercase;letter-spacing:0;white-space:nowrap;' +
+    'transition:background 120ms linear,color 120ms linear,transform 140ms var(--shub-spring);}' +
     '.shub-tab:hover{background:#f5f5f5;color:var(--ui-fg);}' +
+    '.shub-tab:active{transform:translateY(1px);}' +
     '.shub-tab.on{background:#f5f5f5;color:var(--ui-fg);border-bottom-color:var(--ui-muted);}' +
     '#shub-panes{flex:1;min-height:0;overflow:auto;}' +
     '.shub-pane{display:none;padding:10px;}' +
-    '.shub-pane.on{display:block;}' +
+    '.shub-pane.on{display:block;animation:shub-in 200ms var(--shub-spring) both;}' +
+    '@keyframes shub-in{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}' +
+    '#shub-root button:not(#shub-min){transition:transform 140ms var(--shub-spring),background 120ms linear;}' +
+    '#shub-root button:not(#shub-min):active{transform:scale(.97);}' +
     '#shub-root.shub-min{width:44px;cursor:pointer;}' +
     '#shub-root.shub-min #shub-tabs,#shub-root.shub-min #shub-panes,#shub-root.shub-min #shub-head span{display:none;}' +
     '#shub-root.shub-min #shub-head{justify-content:center;padding:9px 0;cursor:pointer;}' +
@@ -412,6 +421,10 @@
     'body.shub-rail .main-header .navbar-header,body.shub-rail .main-header .siretrac_header{float:none;flex:1 1 auto;min-width:0;' +
     'overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}' +
     'body.shub-rail .main-header .navbar-custom-menu,body.shub-rail .main-header .navbar-right{float:none;flex:0 0 auto;}' +
+    'body .content-wrapper,body .right-side,body .main-footer,body .main-header .navbar{' +
+    'transition:margin-right 260ms var(--shub-spring);}' +
+    '@media (prefers-reduced-motion:reduce){#shub-root,.shub-pane.on,#shub-root button,.shub-tab,body .content-wrapper,' +
+    'body .right-side,body .main-footer,body .main-header .navbar{transition:none;animation:none;}}' +
     /* jQuery UI sets its own z-index inline; only !important wins here. */
     '#ui-datepicker-div{z-index:2147483647 !important;}';
 
@@ -541,7 +554,10 @@
     'table.et-grid td{background:var(--ui-bg);}' +
     'table.et-grid td.num{text-align:right;font-variant-numeric:tabular-nums;}' +
     'table.et-grid td:focus{outline:2px solid var(--ui-focus);outline-offset:-2px;}' +
-    'table.et-grid td.sel{background:#eaf6ff;}';
+    'table.et-grid td.sel{background:#eaf6ff;}' +
+    'table.et-grid tbody tr{animation:et-row 200ms cubic-bezier(.2,.8,.2,1) both;}' +
+    '@keyframes et-row{from{opacity:0;}to{opacity:1;}}' +
+    '@media (prefers-reduced-motion:reduce){table.et-grid tbody tr{animation:none;}}';
 
   /* The grid can live in a shadow root, where document styles do not reach: keep its CSS with it. */
   function style(wrap) {
@@ -1809,7 +1825,7 @@
       '  <label class="acs-opt" title="Recorre cada permiso de la sesión en lugar de solo el actual"><input type="checkbox" id="acs-permisos" ' + (CONFIG.RECORRER_PERMISOS ? 'checked' : '') + '> Recorrer permisos</label>' +
       '  <button type="button" id="acs-cfg-toggle" title="Mostrar u ocultar ajustes"><i class="fa-solid fa-gear"></i> Ajustes</button>' +
       '</div>' +
-      '<div id="acs-cfg" style="display:none">' +
+      '<div id="acs-cfg">' +
       '  <label for="acs-vehiculo">Vehículo</label><input type="text" id="acs-vehiculo" value="' + CONFIG.VEHICULO + '">' +
       '  <label for="acs-placas">Placas</label><input type="text" id="acs-placas" value="' + CONFIG.PLACAS + '">' +
       '  <label for="acs-delay">Espera (ms)</label><input type="number" id="acs-delay" value="' + CONFIG.DELAY_MS + '" min="0" step="100" title="Pausa entre operaciones">' +
@@ -1957,7 +1973,7 @@
 
     panel.querySelector('#acs-cfg-toggle').addEventListener('click', function () {
       var cfg = panel.querySelector('#acs-cfg');
-      cfg.style.display = cfg.style.display === 'none' ? 'flex' : 'none';
+      cfg.classList.toggle('acs-open');
     });
 
     panel.querySelector('#acs-cerrar').addEventListener('change', function () { CONFIG.CERRAR_AL_RECEPCIONAR = this.checked; guardarConfig(); });
@@ -1984,7 +2000,7 @@
     'position:static;width:auto;min-height:100%;display:flex;flex-direction:column;background:var(--ui-bg);color:var(--ui-fg);font-family:var(--ui-font);font-weight:400;font-size:14px;line-height:1.43;}' +
     '#acs-side *{box-sizing:border-box;}' +
     '#acs-tabs{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;overflow-x:visible;background:var(--ui-bg);border-bottom:1px solid var(--ui-border-strong);}' +
-    '#acs-tabs li{flex:0 0 auto;padding:9px 12px;cursor:pointer;color:var(--ui-muted);font-size:13px;font-weight: 400;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid transparent;}' +
+    '#acs-tabs li{flex:0 0 auto;padding:8px 8px;cursor:pointer;color:var(--ui-muted);font-size:11px;font-weight: 400;text-transform:uppercase;letter-spacing:.02em;border-bottom:2px solid transparent;transition:background 120ms linear,color 120ms linear;}' +
     '#acs-tabs li:hover{background:#f5f5f5;color:var(--ui-fg);}' +
     '#acs-tabs li.on{background:#f5f5f5;color:var(--ui-fg);border-bottom-color:var(--ui-muted);}' +
     '#acs-body{flex:1;background:var(--ui-bg);}' +
@@ -1995,9 +2011,12 @@
     '#acs-cfg-toggle{cursor:pointer;font:inherit;font-size:13px;margin-left:auto;color:var(--ui-fg);border:1px solid var(--ui-border-input);border-radius:0;background:#f5f5f5;padding:4px 8px;}' +
     '#acs-cfg-toggle:hover{background:#e9e9e9;}' +
     '#acs-cfg-toggle:focus-visible{outline:2px solid var(--ui-focus);outline-offset:1px;}' +
-    '#acs-cfg{display:none;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:10px 12px;background:#f5f5f5;border-bottom:1px solid var(--ui-border);}' +
+    '#acs-cfg{display:none;grid-template-columns:max-content minmax(0,1fr) max-content minmax(0,1fr);gap:8px 10px;align-items:center;padding:10px 12px;background:#f5f5f5;border-bottom:1px solid var(--ui-border);}' +
+    '#acs-cfg.acs-open{display:grid;}' +
+    '#acs-cfg .acs-opt{grid-column:span 2;display:flex;align-items:center;gap:6px;white-space:nowrap;}' +
     '#acs-cfg label{color:var(--ui-fg);font-size:13px;margin:0;font-weight: 400;}' +
-    '#acs-cfg input,#acs-cfg select{border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;padding:5px 6px;max-width:180px;}' +
+    '#acs-cfg input,#acs-cfg select{border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:12px;padding:5px 6px;min-width:0;width:100%;}' +
+    '#acs-cfg input[type="checkbox"]{width:16px;height:16px;flex:0 0 auto;margin:0;accent-color:var(--ui-primary);}' +
     '#acs-topbar input:focus,#acs-topbar select:focus,#acs-cfg input:focus,#acs-cfg select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
     '.acs-opt{color:var(--ui-fg);display:flex;align-items:center;gap:6px;font-size:13px;}' +
     '.acs-opt input{width:14px;height:14px;margin:0;cursor:pointer;}' +
@@ -3034,12 +3053,12 @@
     const css = `
       #sa-panel{background:#fff;color:#333;font:12px var(--ui-font)}
       #sa-panel *{box-sizing:border-box}
-      #sa-panel .sa-grilla{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 6px;align-items:center}
-      #sa-panel .sa-lb{font-size:10px;font-weight: 400;color:#706F6F;text-align:right;white-space:nowrap;line-height:18px}
-      #sa-panel .sa-f{width:100%;height:20px;padding:0 4px;font:11px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0}
+      #sa-panel .sa-grilla{display:grid;grid-template-columns:48px minmax(0,1fr);gap:3px 6px;align-items:center}
+      #sa-panel .sa-lb{font-size:11px;font-weight: 400;color:#706F6F;text-align:right;white-space:nowrap;line-height:24px}
+      #sa-panel .sa-f{width:100%;min-width:0;height:24px;padding:0 5px;font:12px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0}
       #sa-panel .sa-f:focus{outline:1px solid #66afe9;border-color:#66afe9}
       #sa-panel .sa-btns{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:6px 0}
-      #sa-panel .sa-btn{height:22px;padding:0 4px;font:400 11px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      #sa-panel .sa-btn{height:26px;padding:0 4px;font:400 12px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       #sa-panel .sa-btn:hover{background:#e5e5e5}
       #sa-panel .sa-btn:active{background:#ddd}
       #sa-panel .sa-btn:focus{outline:1px solid #66afe9}
@@ -3047,12 +3066,12 @@
       #sa-panel .sa-btn.go:hover{border-color:#333}
       #sa-panel .sa-btn.stop{color:#C60C0E;border-color:#C60C0E}
       #sa-panel .sa-filtro{display:flex;gap:5px;align-items:center;margin-bottom:3px}
-      #sa-panel .sa-bus{flex:1 1 auto;min-width:0;height:20px;padding:0 4px;font:11px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0}
+      #sa-panel .sa-bus{flex:1 1 auto;min-width:0;height:24px;padding:0 5px;font:12px var(--ui-font);color:#333;background:#fff;border:1px solid #ccc;border-radius:0}
       #sa-panel .sa-bus:focus{outline:1px solid #66afe9;border-color:#66afe9}
-      #sa-panel .sa-cuenta{flex:none;font-size:10px;color:#706F6F;white-space:nowrap}
+      #sa-panel .sa-cuenta{flex:none;font-size:11px;color:#706F6F;white-space:nowrap}
       #sa-panel .sa-lista{height:52vh;min-height:140px;overflow:auto;border-top:1px solid #ddd;border-bottom:1px solid #ddd;background:#fff;outline:none;user-select:none;-webkit-user-select:none}
       #sa-panel .sa-lista:focus{outline:1px solid #66afe9}
-      #sa-panel .sa-i{height:20px;line-height:19px;padding:0 5px;font:11px/19px var(--ui-font);color:#333;border-bottom:1px solid #e5e5e5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;outline:none}
+      #sa-panel .sa-i{height:24px;line-height:23px;padding:0 6px;font:12px/23px var(--ui-font);color:#333;border-bottom:1px solid #e5e5e5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;outline:none}
       #sa-panel .sa-i:hover{background:#e5e5e5}
       #sa-panel .sa-i.sa-foc{background:#e5e5e5}
       #sa-panel .sa-i.sa-on{box-shadow:inset 3px 0 0 #2EA836;font-weight: 400}
@@ -6651,6 +6670,8 @@
       --ui-header: #706F6F; --ui-header-hover: #555454;
       --ui-primary: #2EA836; --ui-primary-hover: #317636;
       --ui-danger: #C60C0E; --ui-danger-hover: #701617;
+      --shub-spring: cubic-bezier(.34,1.4,.64,1);
+      --shub-ease: cubic-bezier(.2,.8,.2,1);
       --ui-link: #337ab7; --ui-focus: #66afe9;
     }
     *, *::before, *::after { box-sizing: border-box; }
@@ -7145,7 +7166,7 @@
       color: #8a6d3b;
       font: 400 11px/1.55 'Geist Pixel', ui-monospace, monospace;
     }
-    .st-badge { border-radius: 0; font: 500 9px/1.2 'Geist Pixel', ui-monospace, monospace; }
+    .st-badge { padding: 0 6px; border: 0; margin: 0; border-radius: 0; font: 400 11px/20px 'Geist Pixel', ui-monospace, monospace; }
     .st-badge.st-ok { background: #dff0d8; color: #3c763d; }
     .st-badge.st-warn { background: #fcf8e3; color: #8a6d3b; }
     .st-badge.st-error { background: #f2dede; color: #a94442; }
@@ -7330,6 +7351,21 @@
       border: 1px solid var(--ui-border);
     }
     .st-output:empty { display: none; }
+
+    /* Soft spring on every state change; the page keeps its calm. */
+    .st-tabs button,
+    .st-tabs button span { transition: background 120ms linear, color 120ms linear, transform 160ms var(--shub-spring); }
+    .st-tabs button:active { transform: scale(.97); }
+    .st-tabs button.is-active span { animation: st-pop 240ms var(--shub-spring); }
+    .st-body { animation: st-fade 200ms var(--shub-spring) both; }
+    .st-table-wrap tbody tr { animation: st-row 200ms var(--shub-ease) both; }
+    @keyframes st-pop { from { transform: scale(.72); } to { transform: none; } }
+    @keyframes st-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    @keyframes st-row { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) {
+      .st-tabs button, .st-tabs button span { transition: none; }
+      .st-tabs button.is-active span, .st-body, .st-table-wrap tbody tr { animation: none; }
+    }
 
   `;
 

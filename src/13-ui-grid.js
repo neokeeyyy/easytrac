@@ -13,7 +13,10 @@
     'table.et-grid td{background:var(--ui-bg);}' +
     'table.et-grid td.num{text-align:right;font-variant-numeric:tabular-nums;}' +
     'table.et-grid td:focus{outline:2px solid var(--ui-focus);outline-offset:-2px;}' +
-    'table.et-grid td.sel{background:#eaf6ff;}';
+    'table.et-grid td.sel{background:#eaf6ff;}' +
+    'table.et-grid tbody tr{animation:et-row 200ms cubic-bezier(.2,.8,.2,1) both;}' +
+    '@keyframes et-row{from{opacity:0;}to{opacity:1;}}' +
+    '@media (prefers-reduced-motion:reduce){table.et-grid tbody tr{animation:none;}}';
 
   /* The grid can live in a shadow root, where document styles do not reach: keep its CSS with it. */
   function style(wrap) {
