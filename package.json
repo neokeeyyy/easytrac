@@ -1,0 +1,15 @@
+{
+  "name": "easytrac",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Toolkit SIRETRAC en un solo userscript: sidebar comun, ACS, acuses, venta, fecha y traspasos.",
+  "scripts": {
+    "build": "bun tools/build.mjs",
+    "syntax": "bun tools/syntax.mjs",
+    "test": "bun test",
+    "check": "bun tools/syntax.mjs && bun tools/build.mjs && bun test"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.3"
+  }
+}
