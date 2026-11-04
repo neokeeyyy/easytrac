@@ -3289,6 +3289,7 @@
     }
     /* Mounted inside the EasyTrac sidebar: no floating chrome. */
     .st-fab { display: none; }
+    .st-head { display: none; }
     .st-panel {
       position: static;
       width: 100%;
