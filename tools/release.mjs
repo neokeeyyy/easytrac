@@ -30,6 +30,13 @@ else throw new Error('uso: bun tools/release.mjs patch|minor|major|x.y.z "mensaj
 const version = parts.join('.');
 const tag = 'v' + version;
 
+/* A fresh clone has no git identity and git fails on commit with a wall of text. */
+try {
+  execSync(GIT + ' config user.email', { stdio: 'pipe' });
+} catch (e) {
+  throw new Error('falta identidad de git. Ejecuta:\n  git config --global user.email "tu@correo"\n  git config --global user.name "Tu Nombre"');
+}
+
 if (!flags.includes('--skip-checks')) {
   run('bun tools/syntax.mjs');
   run('bun test');

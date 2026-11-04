@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.0
+// @version      1.0.1
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
