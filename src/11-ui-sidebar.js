@@ -25,7 +25,7 @@
     '.shub-tab:active{transform:translateY(1px);}' +
     '.shub-tab.on{background:#f5f5f5;color:var(--ui-fg);border-bottom-color:var(--ui-muted);}' +
     '#shub-panes{flex:1;min-height:0;overflow:auto;}' +
-    '.shub-pane{display:none;padding:10px;}' +
+    '.shub-pane{display:none;padding:10px 15px 10px 10px;}' +
     '.shub-pane.on{display:block;animation:shub-in 200ms var(--shub-spring) both;}' +
     '@keyframes shub-in{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}' +
     '#shub-root button:not(#shub-min){transition:transform 140ms var(--shub-spring),background 120ms linear;}' +

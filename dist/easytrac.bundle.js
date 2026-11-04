@@ -391,7 +391,7 @@
     '.shub-tab:active{transform:translateY(1px);}' +
     '.shub-tab.on{background:#f5f5f5;color:var(--ui-fg);border-bottom-color:var(--ui-muted);}' +
     '#shub-panes{flex:1;min-height:0;overflow:auto;}' +
-    '.shub-pane{display:none;padding:10px;}' +
+    '.shub-pane{display:none;padding:10px 15px 10px 10px;}' +
     '.shub-pane.on{display:block;animation:shub-in 200ms var(--shub-spring) both;}' +
     '@keyframes shub-in{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}' +
     '#shub-root button:not(#shub-min){transition:transform 140ms var(--shub-spring),background 120ms linear;}' +
@@ -1850,7 +1850,6 @@
       '  <div id="acs-tabla-wrap"><table id="acs-tabla"><thead id="acs-thead"></thead><tbody></tbody></table></div>' +
       '</div>';
     var hubPane = ET.ui.tab('acs', 'ACS', 10, 470);
-    hubPane.style.padding = '0';
     hubPane.appendChild(panel);
 
     var fa = document.createElement('link');
@@ -1982,7 +1981,7 @@
     '#acs-side{' +
     'position:static;width:auto;min-height:100%;display:flex;flex-direction:column;background:var(--ui-bg);color:var(--ui-fg);font-family:var(--ui-font);font-weight:400;font-size:14px;line-height:1.43;}' +
     '#acs-side *{box-sizing:border-box;}' +
-    '#acs-tabs{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;overflow-x:visible;background:var(--ui-bg);border-bottom:1px solid var(--ui-border-strong);}' +
+    '#acs-tabs{list-style:none;margin:-10px -15px 0 -10px;padding:0;display:flex;flex-wrap:wrap;overflow-x:visible;background:var(--ui-bg);border-bottom:1px solid var(--ui-border-strong);}' +
     '#acs-tabs li{flex:0 0 auto;padding:8px 8px;cursor:pointer;color:var(--ui-muted);font-size:11px;font-weight: 400;text-transform:uppercase;letter-spacing:.02em;border-bottom:2px solid transparent;transition:background 120ms linear,color 120ms linear;}' +
     '#acs-tabs li:hover{background:#f5f5f5;color:var(--ui-fg);}' +
     '#acs-tabs li.on{background:#f5f5f5;color:var(--ui-fg);border-bottom-color:var(--ui-muted);}' +
