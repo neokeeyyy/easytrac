@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.2
+// @version      1.0.3
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -1132,13 +1132,12 @@
     return doc;
   }
 
+  /* LP/[XXXXX]/[DIST|EXP]/[ES|PLA]/[AAAA] → LP-XXXXX-DIST-ES-AAAA.pdf.
+     Acepta de 3 a 5 segmentos para no romper códigos viejos. */
   function nombreArchivoTraspaso(codigoRegistro) {
-    var m = String(codigoRegistro).match(/LP\/(\d+)\/\d+\/(\d+)/);
+    var m = String(codigoRegistro || '').match(/LP\/(?:[A-Za-z0-9._-]+\/){1,4}[A-Za-z0-9._-]+/i);
     if (!m) return 'formato_traspaso.pdf';
-    var permiso = m[1];
-    var num = parseInt(m[2], 10);
-    var contador = String(num).padStart(3, '0');
-    return 'LP-' + permiso + '-' + contador + '.pdf';
+    return m[0].replace(/[^A-Za-z0-9]+/g, '-') + '.pdf';
   }
 
   function descargarFormato(compra) {

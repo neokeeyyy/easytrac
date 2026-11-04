@@ -215,9 +215,9 @@ test('cuerpoRecepcion conserva acuse con acentos y comillas', function () {
 });
 
 test('nombreArchivoTraspaso arma LP-permiso-número.pdf', function () {
-  assert.equal(acs.nombreArchivoTraspaso('LP/1295/7/7'), 'LP-1295-007.pdf');
-  assert.equal(acs.nombreArchivoTraspaso('LP/1295/7/4334'), 'LP-1295-4334.pdf');
-  assert.equal(acs.nombreArchivoTraspaso('LP/5621/123/9876'), 'LP-5621-9876.pdf');
+  assert.equal(acs.nombreArchivoTraspaso('LP/1295/DIST/ES/2026'), 'LP-1295-DIST-ES-2026.pdf');
+  assert.equal(acs.nombreArchivoTraspaso('LP/5621/EXP/PLA/2025'), 'LP-5621-EXP-PLA-2025.pdf');
+  assert.equal(acs.nombreArchivoTraspaso('LP/1295/7/4334'), 'LP-1295-7-4334.pdf');
 });
 
 test('nombreArchivoTraspaso cae al nombre genérico con códigos raros y nunca deja caracteres inválidos', function () {
@@ -227,7 +227,7 @@ test('nombreArchivoTraspaso cae al nombre genérico con códigos raros y nunca d
     assert.equal(nombre, 'formato_traspaso.pdf');
     assert.equal(/[\\/:*?"<>|\r\n]/.test(nombre), false);
   });
-  const conSufijo = acs.nombreArchivoTraspaso('LP/1295/7/4334?foo="bar"&x=1');
-  assert.equal(conSufijo, 'LP-1295-4334.pdf');
+  const conSufijo = acs.nombreArchivoTraspaso('LP/1295/DIST/ES/2026?foo="bar"&x=1');
+  assert.equal(conSufijo, 'LP-1295-DIST-ES-2026.pdf');
   assert.equal(/[\\/:*?"<>|\r\n]/.test(conSufijo), false);
 });
