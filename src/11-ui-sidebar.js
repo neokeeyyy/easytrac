@@ -24,6 +24,10 @@
     '.shub-tab:hover{background:#f5f5f5;color:var(--ui-fg);}' +
     '.shub-tab:active{transform:translateY(1px);}' +
     '.shub-tab.on{background:#f5f5f5;color:var(--ui-fg);border-bottom-color:var(--ui-muted);}' +
+    '.shub-gear{margin-left:auto;background:none;border:none;padding:0 9px;cursor:pointer;color:var(--ui-muted);' +
+    'font:inherit;font-size:15px;line-height:1;}' +
+    '.shub-gear:hover,.shub-gear:focus-visible{color:var(--ui-fg);}' +
+    '.shub-gear[aria-pressed="true"]{color:var(--ui-primary);}' +
     '#shub-panes{flex:1;min-height:0;overflow:auto;}' +
     '.shub-pane{display:none;padding:10px 15px 10px 10px;}' +
     '.shub-pane.on{display:block;animation:shub-in 200ms var(--shub-spring) both;}' +
@@ -71,6 +75,8 @@
       els[i].classList[els[i].getAttribute('data-id') === tid ? 'add' : 'remove']('on');
     }
     if (guardar) { try { localStorage.setItem('shub_tab', tid); } catch (e) {} }
+    var g = root.querySelector('.shub-gear');
+    if (g) g.setAttribute('aria-pressed', String(!!gearTarget && gearTarget === tid));
     layout();
   }
 
@@ -133,6 +139,9 @@
         if (+hijos[i].getAttribute('data-o') > +o) { ref = hijos[i]; break; }
       }
       cont.insertBefore(el, ref);
+      /* The gear always stays last, whatever order the tabs arrive in. */
+      var g = tabs.querySelector('.shub-gear');
+      if (g) tabs.appendChild(g);
     }
     insertar(tabs, btn);
     insertar(panes, pane);
@@ -144,8 +153,46 @@
     return pane;
   }
 
+  /* Panel without a tab: opened from a button that lives elsewhere (the gear). */
+  function pane(id, ancho) {
+    if (!root) crear();
+    var existente = panes.querySelector('[data-id="' + id + '"]');
+    if (existente) return existente;
+    var p = document.createElement('div');
+    p.className = 'shub-pane';
+    p.setAttribute('data-id', id);
+    p.setAttribute('data-o', '99');
+    p.setAttribute('data-w', String(ancho || 420));
+    panes.appendChild(p);
+    return p;
+  }
+
+  /* Gear at the right end of the tab strip; it opens a pane created with pane(). */
+  var gearTarget = '';
+  function engrane(titulo, alPulsar, id) {
+    if (!root) crear();
+    gearTarget = id || 'ajustes';
+    var b = tabs.querySelector('.shub-gear');
+    if (!b) {
+      b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'shub-gear';
+      b.textContent = '\u2699';
+      tabs.appendChild(b);
+    }
+    b.title = titulo || 'Ajustes';
+    b.setAttribute('aria-label', titulo || 'Ajustes');
+    b.onclick = function () {
+      if (b.getAttribute('aria-pressed') === 'true' && alPulsar) { alPulsar(true); return; }
+      if (alPulsar) alPulsar();
+    };
+    return b;
+  }
+
   ET.ui = ET.ui || {};
   ET.ui.tab = tab;
+  ET.ui.pane = pane;
+  ET.ui.engrane = engrane;
   ET.ui.activar = activar;
   ET.ui.root = function () { return root; };
   ET.ui.style = function (css) {

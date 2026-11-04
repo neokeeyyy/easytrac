@@ -407,3 +407,63 @@ test('buildTransfers asigna el vehiculo por defecto y vehiculosFaltantes lo dete
   assert.equal(sinVehiculo[0].vehiculo, null);
   assert.deepEqual(api.vehiculosFaltantes(sinVehiculo), sinVehiculo);
 });
+
+test('evaluateRows resuelve la lista por código LP aunque cambien los ids', function () {
+  const permits = [
+    { id: '900', permit: 'LP/14432/DIST/PLA/2016', activity: 'Distribuidor por Planta de Distribucion' },
+    { id: '901', permit: 'LP/16385/EXP/ES/2016', activity: 'Expendio al publico' },
+  ];
+  const mapping = {
+    'planta ojuelos': {
+      name: 'PLANTA OJUELOS',
+      permiso: 'LP/16385/EXP/ES/2016',
+      origen: 'LP/14432/DIST/PLA/2016',
+    },
+  };
+  const parsed = api.parseMatrix('Estación\tLunes\nPLANTA OJUELOS\t100', {
+    weekStart: '2026-10-26',
+  });
+  const rows = api.evaluateRows(parsed, mapping, permits, '');
+
+  assert.equal(rows[0].status, 'OK');
+  assert.equal(rows[0].destination.id, '901');
+  assert.equal(rows[0].destination.permit, 'LP/16385/EXP/ES/2016');
+  assert.equal(rows[0].source.id, '900');
+});
+
+test('evaluateRows cae a permitHint si la lista no resuelve el destino', function () {
+  const permits = [
+    { id: '900', permit: 'LP/14432/DIST/PLA/2016' },
+    { id: '901', permit: 'LP/16385/EXP/ES/2016' },
+  ];
+  const parsed = {
+    rows: [
+      { station: 'MATRIZ', date: '2026-10-26', volumeKg: 100, permitHint: 'LP/16385/EXP/ES/2016' },
+    ],
+  };
+  const rows = api.evaluateRows(parsed, {}, permits, '900');
+
+  assert.equal(rows[0].destination.id, '901');
+  assert.equal(rows[0].source.id, '900');
+});
+
+test('migrateMapping traduce los ids del mapeo viejo a códigos LP', function () {
+  const permits = [
+    { id: '900', permit: 'LP/14432/DIST/PLA/2016' },
+    { id: '901', permit: 'LP/16385/EXP/ES/2016' },
+  ];
+  const saved = {
+    version: 1,
+    stations: [
+      { name: 'PLANTA OJUELOS', destinationId: '901', sourceId: '900' },
+      { name: 'SIN SESION', destinationId: '123', sourceId: '' },
+    ],
+  };
+  const migrated = api.migrateMapping(saved, permits);
+
+  assert.deepEqual(migrated.list, [
+    { nombre: 'PLANTA OJUELOS', permiso: 'LP/16385/EXP/ES/2016', origen: 'LP/14432/DIST/PLA/2016' },
+    { nombre: 'SIN SESION', permiso: '', origen: '' },
+  ]);
+  assert.deepEqual(migrated.missing, ['SIN SESION']);
+});

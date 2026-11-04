@@ -1485,13 +1485,13 @@
     ET.config.add({
       seccion: 'ACS',
       clave: 'acs.vehiculos',
-      etiqueta: 'Vehículos',
+      etiqueta: 'Vehículos (el ID es opcional)',
       tipo: 'lista',
       defecto: DEFAULTS.VEHICULOS,
       columnas: [
-        { clave: 'nombre', etiqueta: 'Nombre', ancho: '28%' },
-        { clave: 'placas', etiqueta: 'Placas', ancho: '26%' },
-        { clave: 'id', etiqueta: 'ID (opcional)', ancho: '10%' }
+        { clave: 'nombre', etiqueta: 'Nombre', ancho: '30%' },
+        { clave: 'placas', etiqueta: 'Placas', ancho: '28%' },
+        { clave: 'id', etiqueta: 'ID', ancho: '12%' }
       ],
       leer: function () { return CONFIG.VEHICULOS; },
       guardar: function (v) { CONFIG.VEHICULOS = v; guardarConfig(); }

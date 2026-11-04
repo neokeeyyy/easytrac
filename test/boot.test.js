@@ -59,7 +59,9 @@ test('ACS arranca sin vehiculo, placas ni fechas de otra empresa', async () => {
 test('el panel Ajustes reúne las opciones persistentes', async () => {
   const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
   const doc = win.document;
-  expect(tabs(win)).toContain('ajustes');
+  expect(tabs(win)).not.toContain('ajustes');
+  /* Ajustes ya no es pestaña: se abre con el engrane del extremo derecho. */
+  expect(doc.querySelector('#shub-tabs .shub-gear')).toBeTruthy();
   const pane = doc.querySelector('.shub-pane[data-id="ajustes"]');
   expect(pane).toBeTruthy();
   expect(pane.querySelector('[data-lista="acs.vehiculos"]')).toBeTruthy();

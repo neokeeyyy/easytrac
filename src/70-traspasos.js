@@ -23,6 +23,8 @@
 
   const STORAGE_PREFIX = 'siretrac-traspasos:v1:';
   const MAPPING_KEY = STORAGE_PREFIX + 'mapping';
+  /* El mapeo universal vive en Ajustes: nombre de plantilla -> código LP. */
+  const PLANTILLAS_KEY = 'traspasos.plantillas';
   const LEDGER_KEY = STORAGE_PREFIX + 'ledger';
   const PRESETS_KEY = STORAGE_PREFIX + 'presets';
   const HOST_ID = 'siretrac-traspasos-host';
@@ -92,6 +94,17 @@
     const text = String(value == null ? '' : value).trim();
     const match = text.match(/LP\s*\/\s*[A-Z0-9]+(?:\s*\/\s*[A-Z0-9]+)+/i);
     return (match ? match[0] : text).replace(/\s+/g, '').toUpperCase();
+  }
+
+  // El código LP es estable entre empresas y sesiones; el id interno de SIRETRAC no.
+  function resolvePermit(code, permits) {
+    const wanted = canonicalPermit(code);
+    if (!wanted) return null;
+    return (
+      (permits || []).find(function (permit) {
+        return canonicalPermit(permit.permit) === wanted;
+      }) || null
+    );
   }
 
   // Formato exacto de la clave de deduplicación.
@@ -672,9 +685,12 @@
   function relatePermits(permits, records) {
     const list = Array.isArray(records) ? records : Object.values(records || {});
     return (permits || []).map(function (permit) {
+      const code = canonicalPermit(permit.permit);
       const names = list
         .filter(function (record) {
-          return record && String(record.destinationId) === String(permit.id);
+          if (!record) return false;
+          if (record.permiso) return canonicalPermit(record.permiso) === code;
+          return String(record.destinationId) === String(permit.id);
         })
         .map(function (record) {
           return String(record.name || '').trim();
@@ -695,16 +711,21 @@
 
     return rows.map(function (row) {
       const entry = mapping ? mapping[normalizeText(row.station)] : null;
-      let destination = entry ? byId.get(String(entry.destinationId)) || null : null;
+      let destination = null;
+      if (entry) {
+        destination = entry.permiso
+          ? resolvePermit(entry.permiso, permits)
+          : entry.destinationId
+            ? byId.get(String(entry.destinationId)) || null
+            : null;
+      }
       // La plantilla real trae "N° DE PERMISO": sirve como destino aunque la estación no esté mapeada.
       if (!destination && row.permitHint) {
-        destination =
-          (permits || []).find(function (permit) {
-            return canonicalPermit(permit.permit) === canonicalPermit(row.permitHint);
-          }) || null;
+        destination = resolvePermit(row.permitHint, permits);
       }
-      const source =
-        (entry && entry.sourceId ? byId.get(String(entry.sourceId)) : null) || globalSource;
+      let source = entry && entry.origen ? resolvePermit(entry.origen, permits) : null;
+      if (!source && entry && entry.sourceId) source = byId.get(String(entry.sourceId)) || null;
+      if (!source) source = globalSource;
       let status = 'OK';
       if (!destination || !source) status = 'Sin mapeo';
       else if (String(destination.id) === String(source.id)) status = 'Origen y destino iguales';
@@ -909,14 +930,16 @@
       }
 
       state.permits = permits;
+      let migrationWarning = '';
       if (!state.mappingRestored) {
-        restoreMapping(loadMapping());
+        migrationWarning = restoreMapping(loadMapping());
         state.mappingRestored = true;
       }
       renderGlobalSource();
       autoSelectSource();
       syncStationsFromTextarea();
-      ui.permitsStatus.textContent = permits.length + ' permiso(s) cargados.';
+      ui.permitsStatus.textContent =
+        permits.length + ' permiso(s) cargados.' + (migrationWarning ? ' ' + migrationWarning : '');
     } catch (error) {
       ui.permitsStatus.textContent = 'Error: ' + error.message;
     }
@@ -960,10 +983,20 @@
         return normalizeText(name);
       })
     );
-    const entries = Object.values(state.mapping).filter(function (entry) {
-      return !wanted.size || wanted.has(normalizeText(entry.name));
-    });
+    const entries = Object.values(state.mapping)
+      .filter(function (entry) {
+        return !wanted.size || wanted.has(normalizeText(entry.name));
+      })
+      .map(function (entry) {
+        const permit = resolvePermit(entry.permiso, state.permits);
+        return { entry: entry, destinationId: permit ? String(permit.id) : '' };
+      });
     const count = assignByOrder(entries, state.permits, state.globalSourceId);
+    for (const item of entries) {
+      if (!item.destinationId) continue;
+      const permit = findPermitById(item.destinationId);
+      if (permit) item.entry.permiso = canonicalPermit(permit.permit);
+    }
     if (count) {
       state.autoMapped = true;
       saveMapping();
@@ -993,31 +1026,19 @@
         return name.trim();
       })
       .filter(Boolean);
-    const next = {};
-    const validIds = new Set(
-      state.permits.map(function (permit) {
-        return String(permit.id);
-      })
-    );
+    /* Se suman a la lista de Ajustes; las filas que no están en el texto se conservan
+       y se editan o eliminan desde la lista. */
+    const next = Object.assign({}, state.mapping);
 
     for (const name of names) {
       const key = normalizeText(name);
       if (!key || next[key]) continue;
-      const previous = state.mapping[key];
-      const suggestion = previous ? null : suggestPermit(name, state.permits);
+      const suggestion = suggestPermit(name, state.permits);
       next[key] = {
         name: name,
-        destinationId: previous
-          ? String(previous.destinationId || '')
-          : suggestion
-            ? String(suggestion.id)
-            : '',
-        sourceId: previous ? String(previous.sourceId || '') : '',
+        permiso: suggestion ? canonicalPermit(suggestion.permit) : '',
+        origen: '',
       };
-      if (state.permits.length) {
-        if (!validIds.has(next[key].destinationId)) next[key].destinationId = '';
-        if (!validIds.has(next[key].sourceId)) next[key].sourceId = '';
-      }
     }
 
     state.mapping = next;
@@ -1103,14 +1124,17 @@
     }
 
     for (const [key, entry] of entries) {
-      const connected = Boolean(entry.destinationId) && !isSourcePermit(findPermitById(entry.destinationId));
+      const permit = resolvePermit(entry.permiso, state.permits);
+      const connected = Boolean(permit) && !isSourcePermit(permit);
       const node = el('div', 'st-wire-node st-wire-station' + (connected ? ' is-connected' : ''));
       node.dataset.stationKey = key;
       node.title = entry.name;
       const port = el('span', 'st-wire-port');
       const label = el('div', 'st-wire-label');
       label.append(el('strong', '', entry.name || key));
-      if (!connected) label.append(el('small', '', 'Sin conectar'));
+      if (!connected) {
+        label.append(el('small', '', entry.permiso ? 'No está en esta sesión' : 'Sin conectar'));
+      }
       node.append(port, label);
       right.append(node);
       stationPorts.set(key, port);
@@ -1137,8 +1161,9 @@
     svg.textContent = '';
 
     for (const entry of Object.values(state.mapping)) {
-      if (!entry.destinationId) continue;
-      const from = wireView.permits.get(String(entry.destinationId));
+      const permit = resolvePermit(entry.permiso, state.permits);
+      if (!permit) continue;
+      const from = wireView.permits.get(String(permit.id));
       const toKey = normalizeText(entry.name || '');
       const to = wireView.stations.get(toKey);
       if (!from || !to) continue;
@@ -1156,119 +1181,10 @@
     }
   }
 
-  function connectStationToPermit(stationKey, permitId) {
-    const entry = state.mapping[stationKey];
-    const permit = findPermitById(permitId);
-    if (!entry || !permit || isSourcePermit(permit)) return;
-    entry.destinationId = String(permit.id);
-    entry.sourceId = '';
-    state.autoMapped = false;
-    saveMapping();
-    invalidateTransfers('Mapeo actualizado; vuelve a generar los traspasos.');
-    renderStations();
-    refreshPreview();
-    ui.permitsStatus.textContent = 'Conectado: ' + entry.name + ' → ' + permit.permit;
-  }
-
-  function disconnectStation(stationKey) {
-    const entry = state.mapping[stationKey];
-    if (!entry) return;
-    entry.destinationId = '';
-    saveMapping();
-    invalidateTransfers('Mapeo actualizado; vuelve a generar los traspasos.');
-    renderStations();
-    refreshPreview();
-    ui.permitsStatus.textContent = 'Sin conectar: ' + entry.name;
-  }
-
-  function drawWireTemp(event) {
-    if (!wireView || !wireView.drag || !wireView.temp) return;
-    const board = wireView.board;
-    const port = wireView.permits.get(String(wireView.drag.permitId));
-    if (!port) return;
-    const rect = board.getBoundingClientRect();
-    const a = port.getBoundingClientRect();
-    const x1 = a.left + a.width / 2 - rect.left + board.scrollLeft;
-    const y1 = a.top + a.height / 2 - rect.top + board.scrollTop;
-    const x2 = event.clientX - rect.left + board.scrollLeft;
-    const y2 = event.clientY - rect.top + board.scrollTop;
-    wireView.temp.setAttribute('d', wirePath(x1, y1, x2, y2));
-  }
-
-  function onWirePointerDown(event) {
-    if (event.button !== 0 || !wireView) return;
-    const node = event.target.closest('[data-permit-id]');
-    if (!node || node.classList.contains('is-source')) return;
-    event.preventDefault();
-    wireView.drag = { permitId: node.dataset.permitId, pointerId: event.pointerId };
-    try {
-      node.setPointerCapture(event.pointerId);
-    } catch (error) {
-      /* ignore */
-    }
-    const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('class', 'st-wire-path st-wire-temp');
-    wireView.svg.append(path);
-    wireView.temp = path;
-    drawWireTemp(event);
-  }
-
-  function onWirePointerMove(event) {
-    if (!wireView || !wireView.drag || event.pointerId !== wireView.drag.pointerId) return;
-    drawWireTemp(event);
-  }
-
-  function onWirePointerUp(event) {
-    if (!wireView || !wireView.drag) return;
-    const drag = wireView.drag;
-    wireView.drag = null;
-    if (wireView.temp) {
-      wireView.temp.remove();
-      wireView.temp = null;
-    }
-    if (event.pointerId !== drag.pointerId) return;
-    const target = ui.root.elementFromPoint
-      ? ui.root.elementFromPoint(event.clientX, event.clientY)
-      : document.elementFromPoint(event.clientX, event.clientY);
-    const station = target && target.closest('[data-station-key]');
-    if (station) connectStationToPermit(station.dataset.stationKey, drag.permitId);
-  }
-
-  function onWireClick(event) {
-    const cable = event.target.closest('[data-cable-station]');
-    if (!cable) return;
-    disconnectStation(cable.getAttribute('data-cable-station'));
-  }
-
   function renderStations() {
     if (!ui) return;
-    ui.stationList.textContent = '';
     renderMappingBoard();
     renderPermitRelations();
-    if (!state.permits.length) {
-      ui.stationList.append(el('div', 'st-note', 'Carga los permisos para asignar destinos.'));
-      return;
-    }
-    if (state.autoMapped) {
-      ui.stationList.append(
-        el('div', 'st-note', 'Mapeo automático por orden. Revisa que cada estación tenga el permiso correcto.')
-      );
-    }
-    const entries = Object.entries(state.mapping);
-    if (!entries.length) {
-      ui.stationList.append(
-        el('div', 'st-note', 'Pega las estaciones (una por línea) o cárgalas desde la matriz.')
-      );
-      return;
-    }
-    for (const [key, entry] of entries) {
-      const row = el('div', 'st-map-row');
-      row.dataset.key = key;
-      row.append(el('div', 'st-map-name', entry.name));
-      row.append(selectField('Destino', 'dest', entry.destinationId, '— Sin asignar —'));
-      row.append(selectField('Origen', 'src', entry.sourceId, 'Usar origen global'));
-      ui.stationList.append(row);
-    }
   }
 
   function renderPermitRelations() {
@@ -1295,26 +1211,75 @@
     }
   }
 
-  function selectField(labelText, role, value, placeholder) {
-    const label = el('label', 'st-field st-field-sm');
-    label.append(document.createTextNode(labelText));
-    const select = document.createElement('select');
-    select.dataset.role = role;
-    select.append(option('', placeholder));
-    for (const permit of state.permits) {
-      select.append(option(permit.id, permitLabel(permit)));
-    }
-    const exists = Array.from(select.options).some(function (item) {
-      return item.value === String(value);
-    });
-    select.value = exists ? String(value) : '';
-    label.append(select);
-    return label;
-  }
-
   // ---------------------------------------------------------------------------
   // Mapeo persistido
   // ---------------------------------------------------------------------------
+
+  function loadPlantillas() {
+    if (!ET.store) return [];
+    const raw = ET.store.get(PLANTILLAS_KEY, []);
+    return Array.isArray(raw) ? raw : [];
+  }
+
+  function savePlantillas(list) {
+    if (!ET.store) return;
+    ET.store.set(PLANTILLAS_KEY, list);
+  }
+
+  function mappingFromList(list) {
+    const mapping = {};
+    for (const item of Array.isArray(list) ? list : []) {
+      if (!item) continue;
+      const name = String(item.nombre || item.name || '').trim();
+      const key = normalizeText(name);
+      if (!key) continue;
+      mapping[key] = {
+        name: name,
+        permiso: canonicalPermit(item.permiso || ''),
+        origen: canonicalPermit(item.origen || ''),
+      };
+    }
+    return mapping;
+  }
+
+  function listFromMapping() {
+    return Object.values(state.mapping).map(function (entry) {
+      return {
+        nombre: entry.name,
+        permiso: entry.permiso || '',
+        origen: entry.origen || '',
+      };
+    });
+  }
+
+  /* Convierte el mapeo viejo (ids internos) a la lista universal (códigos LP). */
+  function migrateMapping(saved, permits) {
+    const byId = new Map(
+      (permits || []).map(function (permit) {
+        return [String(permit.id), permit];
+      })
+    );
+    const list = [];
+    const missing = [];
+    const seen = new Set();
+    for (const item of saved && Array.isArray(saved.stations) ? saved.stations : []) {
+      if (!item || !item.name) continue;
+      const name = String(item.name).trim();
+      const key = normalizeText(name);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const destination = item.destinationId ? byId.get(String(item.destinationId)) : null;
+      const source = item.sourceId ? byId.get(String(item.sourceId)) : null;
+      if (item.destinationId && !destination) missing.push(name);
+      if (item.sourceId && !source) missing.push(name + ' (origen)');
+      list.push({
+        nombre: name,
+        permiso: destination ? canonicalPermit(destination.permit) : '',
+        origen: source ? canonicalPermit(source.permit) : '',
+      });
+    }
+    return { list: list, missing: missing };
+  }
 
   function loadMapping() {
     try {
@@ -1327,43 +1292,50 @@
     }
   }
 
+  /* Restaura los ajustes del panel y la lista de plantillas; migra el mapeo viejo si hace falta.
+     Devuelve el aviso de ids que ya no existen en la sesión, para mostrarlo una sola vez. */
   function restoreMapping(saved) {
-    if (!saved) return;
-    state.globalSourceId = String(saved.globalSourceId || '');
-    state.sourceScId = String(saved.sourceScId || '');
-    state.tipoSuministradorId = String(saved.tipoSuministradorId || state.tipoSuministradorId);
-    state.tipoSuministradorName = String(
-      saved.tipoSuministradorName || state.tipoSuministradorName
-    );
-    if (ui && !ui.stations.value.trim()) {
-      const names = Array.isArray(saved.stations)
-        ? saved.stations
-            .map(function (item) {
-              return item && item.name;
-            })
-            .filter(Boolean)
-        : [];
-      ui.stations.value =
-        typeof saved.stationsText === 'string' && saved.stationsText.trim()
-          ? saved.stationsText
-          : names.join('\n');
+    if (saved) {
+      state.globalSourceId = String(saved.globalSourceId || '');
+      state.sourceScId = String(saved.sourceScId || '');
+      state.tipoSuministradorId = String(saved.tipoSuministradorId || state.tipoSuministradorId);
+      state.tipoSuministradorName = String(
+        saved.tipoSuministradorName || state.tipoSuministradorName
+      );
+      if (ui && !ui.stations.value.trim()) {
+        const names = Array.isArray(saved.stations)
+          ? saved.stations
+              .map(function (item) {
+                return item && item.name;
+              })
+              .filter(Boolean)
+          : [];
+        ui.stations.value =
+          typeof saved.stationsText === 'string' && saved.stationsText.trim()
+            ? saved.stationsText
+            : names.join('\n');
+      }
     }
-    const mapping = {};
-    for (const item of Array.isArray(saved.stations) ? saved.stations : []) {
-      if (!item || !item.name) continue;
-      const key = normalizeText(item.name);
-      if (!key) continue;
-      mapping[key] = {
-        name: String(item.name),
-        destinationId: String(item.destinationId || ''),
-        sourceId: String(item.sourceId || ''),
-      };
+
+    let list = loadPlantillas();
+    let warning = '';
+    if (!list.length && saved) {
+      const migrated = migrateMapping(saved, state.permits);
+      if (migrated.list.length) {
+        list = migrated.list;
+        savePlantillas(list);
+      }
+      if (migrated.missing.length) {
+        warning = 'Aviso: ' + migrated.missing.length + ' id(s) del mapeo anterior no existen en esta sesión (' + migrated.missing.join(', ') + '); revisa la lista en Ajustes.';
+      }
     }
-    state.mapping = mapping;
+    state.mapping = mappingFromList(list);
+    return warning;
   }
 
   function saveMapping() {
     if (!ui) return;
+    savePlantillas(listFromMapping());
     const payload = {
       version: 1,
       stationsText: ui.stations.value,
@@ -1371,19 +1343,19 @@
       sourceScId: state.sourceScId,
       tipoSuministradorId: state.tipoSuministradorId,
       tipoSuministradorName: state.tipoSuministradorName,
-      stations: Object.values(state.mapping).map(function (entry) {
-        return {
-          name: entry.name,
-          destinationId: entry.destinationId,
-          sourceId: entry.sourceId,
-        };
-      }),
     };
     try {
       localStorage.setItem(MAPPING_KEY, JSON.stringify(payload));
     } catch (error) {
       // Sin persistencia el mapeo sigue funcionando en esta sesión.
     }
+  }
+
+  /* Relee la lista de Ajustes cuando se vuelve a esa pestaña: pudo cambiar fuera de este panel. */
+  function refreshPlantillas() {
+    state.mapping = mappingFromList(loadPlantillas());
+    renderStations();
+    refreshPreview();
   }
 
   // ---------------------------------------------------------------------------
@@ -1465,7 +1437,7 @@
 
     const sources = {};
     for (const entry of Object.values(state.mapping)) {
-      sources[normalizeText(entry.name)] = entry.sourceId || '';
+      sources[normalizeText(entry.name)] = entry.origen || '';
     }
     const preset = {
       name: clean,
@@ -1505,7 +1477,9 @@
     for (const entry of Object.values(state.mapping)) {
       const key = normalizeText(entry.name);
       if (Object.prototype.hasOwnProperty.call(preset.sources, key)) {
-        entry.sourceId = preset.sources[key] || '';
+        const value = preset.sources[key] || '';
+        const permit = resolvePermit(value, state.permits) || findPermitById(value);
+        entry.origen = permit ? canonicalPermit(permit.permit) : canonicalPermit(value);
       }
     }
     saveMapping();
@@ -2481,7 +2455,10 @@
     for (const panel of ui.panels) {
       panel.hidden = panel.dataset.panel !== name;
     }
-    if (name === 'config') requestAnimationFrame(drawMappingCables);
+    if (name === 'config') {
+      refreshPlantillas();
+      requestAnimationFrame(drawMappingCables);
+    }
   }
 
   function openPanel() {
@@ -2567,10 +2544,10 @@
     }
     let count = 0;
     for (const entry of Object.values(state.mapping)) {
-      if (entry.destinationId) continue;
+      if (entry.permiso) continue;
       const suggestion = suggestPermit(entry.name, state.permits);
       if (suggestion) {
-        entry.destinationId = String(suggestion.id);
+        entry.permiso = canonicalPermit(suggestion.permit);
         count += 1;
       }
     }
@@ -2581,20 +2558,6 @@
     ui.permitsStatus.textContent = count
       ? count + ' destino(s) sugeridos. Revisa y ajusta antes de generar.'
       : 'No hubo coincidencias para sugerir destinos.';
-  }
-
-  function onStationChange(event) {
-    const row = event.target.closest('.st-map-row');
-    if (!row) return;
-    const entry = state.mapping[row.dataset.key];
-    if (!entry) return;
-    const role = event.target.dataset.role;
-    if (role === 'dest') entry.destinationId = event.target.value;
-    if (role === 'src') entry.sourceId = event.target.value;
-    saveMapping();
-    invalidateTransfers('Mapeo actualizado; vuelve a generar los traspasos.');
-    renderMappingBoard();
-    refreshPreview();
   }
 
   function bindEvents() {
@@ -2618,7 +2581,6 @@
       if (ui.preset.value) applyPreset(ui.preset.value);
     });
     ui.stations.addEventListener('change', syncStationsFromTextarea);
-    ui.stationList.addEventListener('change', onStationChange);
     ui.summary.addEventListener('change', function (event) {
       const select = event.target.closest('[data-role="transfer-vehicle"]');
       if (!select) return;
@@ -2634,11 +2596,6 @@
       const again = ui.summary.querySelector('[data-role="transfer-vehicle"][data-index="' + index + '"]');
       if (again) again.focus();
     });
-    ui.mappingBoard.addEventListener('pointerdown', onWirePointerDown);
-    ui.mappingBoard.addEventListener('pointermove', onWirePointerMove);
-    ui.mappingBoard.addEventListener('pointerup', onWirePointerUp);
-    ui.mappingBoard.addEventListener('pointercancel', onWirePointerUp);
-    ui.mappingBoard.addEventListener('click', onWireClick);
     if (typeof ResizeObserver !== 'undefined') {
       new ResizeObserver(function () {
         drawMappingCables();
@@ -2752,7 +2709,7 @@
               <h2>Mapeo de estaciones y permisos</h2>
             </div>
           </div>
-          <p class="st-help">Relaciona cada estación de tu plantilla con su permiso de SIRETRAC. Se guarda en este navegador.</p>
+          <p class="st-help">Las estaciones se asocian a su permiso LP en Ajustes (engrane, arriba a la derecha). Se guarda en este navegador.</p>
           <div class="st-note" data-role="permits-status">Abre el panel para cargar los permisos.</div>
           <div class="st-card">
             <div class="st-grid-2">
@@ -2789,11 +2746,7 @@
               <button type="button" data-action="suggest">Sugerir destinos</button>
             </div>
             <div class="st-wire" data-role="mapping-board"></div>
-            <p class="st-note">Arrastra un cable desde un permiso hasta el nombre de tu plantilla. Clic en un cable para quitarlo.</p>
-            <details class="st-details">
-              <summary>Lista de respaldo (seleccionar permiso)</summary>
-              <div class="st-stations" data-role="station-list"></div>
-            </details>
+            <p class="st-note">El mapeo se edita en Ajustes (engrane, arriba a la derecha).</p>
           </div>
           <details class="st-details">
             <summary>Ver relación permiso ↔ estación</summary>
@@ -3562,7 +3515,6 @@
       sourceScId: root.querySelector('[data-role="source-sc-id"]'),
       preset: root.querySelector('[data-role="preset"]'),
       stations: root.querySelector('[data-role="stations"]'),
-      stationList: root.querySelector('[data-role="station-list"]'),
       mappingBoard: root.querySelector('[data-role="mapping-board"]'),
       permitRelations: root.querySelector('[data-role="permit-relations"]'),
       matrix: root.querySelector('[data-role="matrix"]'),
@@ -3616,6 +3568,8 @@
     parseVolume: parseVolume,
     parseDate: parseDate,
     normalizeText: normalizeText,
+    canonicalPermit: canonicalPermit,
+    resolvePermit: resolvePermit,
     normalizeKey: normalizeKey,
     extractAcuses: extractAcuses,
     acuseKey: acuseKey,
@@ -3623,6 +3577,7 @@
     suggestPermit: suggestPermit,
     assignByOrder: assignByOrder,
     relatePermits: relatePermits,
+    migrateMapping: migrateMapping,
     evaluateRows: evaluateRows,
     buildTransfers: buildTransfers,
     vehiculosFaltantes: vehiculosFaltantes,
@@ -3689,6 +3644,20 @@
       defecto: 800,
       leer: function () { return ET.traspasos.sendDelay(); },
       guardar: function (v) { ET.traspasos.sendDelay(v); },
+    });
+    ET.config.add({
+      seccion: 'Traspasos',
+      clave: PLANTILLAS_KEY,
+      etiqueta: 'Plantillas y permisos LP',
+      tipo: 'lista',
+      columnas: [
+        { clave: 'nombre', etiqueta: 'Plantilla', ancho: '20%' },
+        { clave: 'permiso', etiqueta: 'Permiso', ancho: '20%' },
+        { clave: 'origen', etiqueta: 'Origen', ancho: '20%' },
+      ],
+      defecto: [],
+      leer: function () { return loadPlantillas(); },
+      guardar: function (v) { savePlantillas(v); refreshPlantillas(); },
     });
   }
 })();

@@ -349,7 +349,7 @@
   }
 
   function crearPane() {
-    var p = ET.ui.tab('ajustes', 'Ajustes', 90, 420);
+    var p = ET.ui.pane('ajustes', 420);
     p.id = 'etcfg-pane';
     p.addEventListener('change', function (ev) {
       var el = ev.target;
@@ -409,9 +409,18 @@
     return pane;
   }
 
-  function abrir() {
+  var volverA = '';
+
+  function abrir(alternar) {
     pintar();
-    if (ET.ui.activar) ET.ui.activar('ajustes', true);
+    /* Second click on the gear returns where you were. */
+    if (alternar && pane && pane.classList.contains('on') && volverA) {
+      if (ET.ui.activar) ET.ui.activar(volverA, false);
+      return;
+    }
+    var on = document.querySelector('#shub-panes .shub-pane.on');
+    if (on && on !== pane) volverA = on.getAttribute('data-id');
+    if (ET.ui.activar) ET.ui.activar('ajustes', false);
     abierto = true;
     if (btnGuardar) btnGuardar.disabled = false;
   }
@@ -552,6 +561,7 @@
   if (typeof document !== 'undefined' && ET.ready) {
     ET.ready(function () {
       pintar();
+      if (ET.ui.engrane) ET.ui.engrane('Ajustes', abrir, 'ajustes');
       /* Un tick después: los @require corren antes del cuerpo del loader, que es quien
          escribe la versión instalada. Sin esto el modal compara contra 0.0.0-dev y vuelve. */
       setTimeout(revisar, 0);
