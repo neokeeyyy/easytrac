@@ -7,6 +7,7 @@
   var VISTO = 'cfg_visto';
 
   var campos = [];
+  var acciones = [];
   var porClave = {};
   var pane = null;
   var modal = null, btnGuardar = null, abierto = false, atajo = null;
@@ -23,6 +24,14 @@
     c.tipo = c.tipo || 'text';
     porClave[c.clave] = c;
     campos.push(c);
+    if (pane) pintarCampos();
+  }
+
+  /* Botón suelto dentro de una sección (no guarda nada): lo usa el aviso de versión. */
+  function accion(a) {
+    if (!a || !a.etiqueta) return;
+    a.seccion = a.seccion || 'General';
+    acciones.push(a);
     if (pane) pintarCampos();
   }
 
@@ -112,14 +121,22 @@
   function pintarCampos() {
     if (!pane) return;
     var secciones = [], porSeccion = {};
-    campos.forEach(function (c) {
-      if (!porSeccion[c.seccion]) { porSeccion[c.seccion] = []; secciones.push(c.seccion); }
-      porSeccion[c.seccion].push(c);
-    });
+    function grupo(nombre) {
+      if (!porSeccion[nombre]) { porSeccion[nombre] = { campos: [], acciones: [] }; secciones.push(nombre); }
+      return porSeccion[nombre];
+    }
+    campos.forEach(function (c) { grupo(c.seccion).campos.push(c); });
+    acciones.forEach(function (a, i) { grupo(a.seccion).acciones.push({ a: a, i: i }); });
     var html = '<p class="etcfg-hint">Se guarda al cambiar cada campo. Revísalos antes de procesar.</p>';
     secciones.forEach(function (s) {
+      var g = porSeccion[s];
       html += '<section class="etcfg-sec"><h3>' + esc(s) + '</h3>' +
-        porSeccion[s].map(campoHtml).join('') + '</section>';
+        g.campos.map(campoHtml).join('') +
+        g.acciones.map(function (it) {
+          return '<div class="etcfg-campo"><button type="button" class="etcfg-boton" data-accion="' + it.i + '">' +
+            esc(it.a.etiqueta) + '</button></div>';
+        }).join('') +
+        '</section>';
     });
     if (!secciones.length) html += '<p class="etcfg-hint">No hay opciones configurables.</p>';
     pane.innerHTML = html;
@@ -133,6 +150,12 @@
       var clave = el && el.getAttribute && el.getAttribute('data-clave');
       if (!clave) return;
       set(clave, el.type === 'checkbox' ? el.checked : el.value);
+    });
+    p.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest('[data-accion]') : null;
+      if (!b) return;
+      var a = acciones[+b.getAttribute('data-accion')];
+      if (a && a.alPulsar) a.alPulsar();
     });
     return p;
   }
@@ -220,8 +243,12 @@
     '#etcfg-pane label{font-size:13px;font-weight:400;color:var(--ui-fg);margin:0;}' +
     '#etcfg-pane input[type=text],#etcfg-pane input[type=number],#etcfg-pane select,#etcfg-pane textarea{width:100%;min-width:0;max-width:100%;padding:6px 7px;' +
     'border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;}' +
-    '#etcfg-pane textarea{resize:vertical;min-height:72px;}' +
+    '#etcfg-pane textarea{resize:vertical;min-height:72px;grid-column:1 / -1;}' +
     '#etcfg-pane input[type=checkbox]{width:16px;height:16px;flex:0 0 auto;margin:0;accent-color:var(--ui-primary);}' +
+    '#etcfg-pane .etcfg-boton{font:400 13px/1 var(--ui-font);padding:8px 11px;border:1px solid var(--ui-border-input);' +
+    'background:var(--ui-bg);color:var(--ui-fg);border-radius:0;cursor:pointer;transition:background 120ms linear,transform 140ms var(--shub-spring);}' +
+    '#etcfg-pane .etcfg-boton:hover{background:#f5f5f5;}' +
+    '#etcfg-pane .etcfg-boton:active{transform:scale(.97);}' +
     '#etcfg-pane input:focus,#etcfg-pane select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
     '#etcfg-modal{position:fixed;inset:0;z-index:2147483100;display:flex;align-items:center;justify-content:center;padding:16px;' +
     'background:rgba(51,51,51,.55);font:400 14px/1.43 var(--ui-font);color:var(--ui-fg);box-sizing:border-box;}' +
@@ -249,6 +276,7 @@
 
   ET.config = {
     add: add,
+    accion: accion,
     valor: valor,
     set: set,
     abrir: abrir,

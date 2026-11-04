@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.16'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.17'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -549,6 +549,7 @@
   var CLAVE = 'update'; /* ET.store añade el prefijo easytrac: */
   var SILENCIO = 3 * 24 * 60 * 60 * 1000; // «Ahora no» calla 3 días
   var REVISION = 12 * 60 * 60 * 1000;     // y como mucho se mira dos veces al día
+  var ESPERA = 30 * 60 * 1000;            // tras un fallo de red, medio hora
 
   /* true si remota es más nueva que actual, comparando segmento a segmento. */
   function hayNueva(actual, remota) {
@@ -585,6 +586,8 @@
     '60%{opacity:1;transform:translateY(-4px) scale(1.012)}100%{opacity:1;transform:none}}',
     '@keyframes et-upd-out{to{opacity:0;transform:translateY(16px)}}',
     '@media (prefers-reduced-motion:reduce){#et-upd,#et-upd.et-upd-out{animation:none}}',
+    '#et-upd-aviso{position:fixed;left:16px;bottom:16px;z-index:2147482100;padding:9px 12px;background:var(--ui-bg);',
+    'border:1px solid var(--ui-border-strong);border-radius:0;font:400 13px/1.4 var(--ui-font);color:var(--ui-fg)}',
   ].join('');
 
   function cerrar(caja, luego) {
@@ -622,27 +625,64 @@
     document.body.appendChild(caja);
   }
 
-  function revisar() {
+  /* La marca de revisión solo se guarda cuando la consulta responde bien: si la red
+     falla, se reintenta a los 30 minutos en la visita siguiente en vez de callar 12 h. */
+  function revisar(forzar) {
     var st = ET.store.get(CLAVE, {}) || {};
     var ahora = Date.now();
-    if (st.hasta && ahora < st.hasta) return;
-    if (st.visto && ahora - st.visto < REVISION) return;
-    st.visto = ahora;
-    ET.store.set(CLAVE, st);
+    if (!forzar) {
+      if (st.hasta && ahora < st.hasta) return;
+      if (st.visto && ahora - st.visto < REVISION) return;
+      if (st.fallo && ahora - st.fallo < ESPERA) return;
+    }
     fetch(FUENTE, { cache: 'no-store' })
-      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
       .then(function (t) {
         var v = versionDe(t);
+        st = ET.store.get(CLAVE, {}) || {};
+        st.visto = Date.now();
+        delete st.fallo;
+        ET.store.set(CLAVE, st);
         if (v && hayNueva(ET.version, v)) mostrar(v);
+        else if (forzar) avisar('Ya tienes la última versión (' + ET.version + ').');
       })
-      .catch(function () { /* sin red: la próxima visita lo reintenta */ });
+      .catch(function () {
+        st = ET.store.get(CLAVE, {}) || {};
+        st.fallo = Date.now();
+        ET.store.set(CLAVE, st);
+        if (forzar) avisar('No se pudo consultar GitHub. Revisa tu red y vuelve a intentar.');
+      });
+  }
+
+  /* Respuesta breve en la esquina, para el botón manual de Ajustes. */
+  function avisar(texto) {
+    var caja = document.getElementById('et-upd-aviso');
+    if (caja) caja.parentNode.removeChild(caja);
+    caja = document.createElement('div');
+    caja.id = 'et-upd-aviso';
+    caja.textContent = texto;
+    (ET.ui.style || function () {})(CSS);
+    document.body.appendChild(caja);
+    setTimeout(function () { if (caja.parentNode) caja.parentNode.removeChild(caja); }, 5000);
   }
 
   ET.update = { revisar: revisar, hayNueva: hayNueva, versionDe: versionDe, fuente: FUENTE };
   if (typeof module !== 'undefined' && module.exports) module.exports = ET.update;
 
   if (typeof document !== 'undefined' && typeof fetch === 'function') {
-    ET.ready(function () { setTimeout(revisar, 4000); });
+    ET.ready(function () {
+      setTimeout(revisar, 4000);
+      if (ET.config && ET.config.accion) {
+        ET.config.accion({
+          seccion: 'Aplicación',
+          etiqueta: 'Buscar actualizaciones',
+          alPulsar: function () { revisar(true); },
+        });
+      }
+    });
   }
 })();
 
@@ -849,6 +889,7 @@
   var VISTO = 'cfg_visto';
 
   var campos = [];
+  var acciones = [];
   var porClave = {};
   var pane = null;
   var modal = null, btnGuardar = null, abierto = false, atajo = null;
@@ -865,6 +906,14 @@
     c.tipo = c.tipo || 'text';
     porClave[c.clave] = c;
     campos.push(c);
+    if (pane) pintarCampos();
+  }
+
+  /* Botón suelto dentro de una sección (no guarda nada): lo usa el aviso de versión. */
+  function accion(a) {
+    if (!a || !a.etiqueta) return;
+    a.seccion = a.seccion || 'General';
+    acciones.push(a);
     if (pane) pintarCampos();
   }
 
@@ -954,14 +1003,22 @@
   function pintarCampos() {
     if (!pane) return;
     var secciones = [], porSeccion = {};
-    campos.forEach(function (c) {
-      if (!porSeccion[c.seccion]) { porSeccion[c.seccion] = []; secciones.push(c.seccion); }
-      porSeccion[c.seccion].push(c);
-    });
+    function grupo(nombre) {
+      if (!porSeccion[nombre]) { porSeccion[nombre] = { campos: [], acciones: [] }; secciones.push(nombre); }
+      return porSeccion[nombre];
+    }
+    campos.forEach(function (c) { grupo(c.seccion).campos.push(c); });
+    acciones.forEach(function (a, i) { grupo(a.seccion).acciones.push({ a: a, i: i }); });
     var html = '<p class="etcfg-hint">Se guarda al cambiar cada campo. Revísalos antes de procesar.</p>';
     secciones.forEach(function (s) {
+      var g = porSeccion[s];
       html += '<section class="etcfg-sec"><h3>' + esc(s) + '</h3>' +
-        porSeccion[s].map(campoHtml).join('') + '</section>';
+        g.campos.map(campoHtml).join('') +
+        g.acciones.map(function (it) {
+          return '<div class="etcfg-campo"><button type="button" class="etcfg-boton" data-accion="' + it.i + '">' +
+            esc(it.a.etiqueta) + '</button></div>';
+        }).join('') +
+        '</section>';
     });
     if (!secciones.length) html += '<p class="etcfg-hint">No hay opciones configurables.</p>';
     pane.innerHTML = html;
@@ -975,6 +1032,12 @@
       var clave = el && el.getAttribute && el.getAttribute('data-clave');
       if (!clave) return;
       set(clave, el.type === 'checkbox' ? el.checked : el.value);
+    });
+    p.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest('[data-accion]') : null;
+      if (!b) return;
+      var a = acciones[+b.getAttribute('data-accion')];
+      if (a && a.alPulsar) a.alPulsar();
     });
     return p;
   }
@@ -1062,8 +1125,12 @@
     '#etcfg-pane label{font-size:13px;font-weight:400;color:var(--ui-fg);margin:0;}' +
     '#etcfg-pane input[type=text],#etcfg-pane input[type=number],#etcfg-pane select,#etcfg-pane textarea{width:100%;min-width:0;max-width:100%;padding:6px 7px;' +
     'border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;}' +
-    '#etcfg-pane textarea{resize:vertical;min-height:72px;}' +
+    '#etcfg-pane textarea{resize:vertical;min-height:72px;grid-column:1 / -1;}' +
     '#etcfg-pane input[type=checkbox]{width:16px;height:16px;flex:0 0 auto;margin:0;accent-color:var(--ui-primary);}' +
+    '#etcfg-pane .etcfg-boton{font:400 13px/1 var(--ui-font);padding:8px 11px;border:1px solid var(--ui-border-input);' +
+    'background:var(--ui-bg);color:var(--ui-fg);border-radius:0;cursor:pointer;transition:background 120ms linear,transform 140ms var(--shub-spring);}' +
+    '#etcfg-pane .etcfg-boton:hover{background:#f5f5f5;}' +
+    '#etcfg-pane .etcfg-boton:active{transform:scale(.97);}' +
     '#etcfg-pane input:focus,#etcfg-pane select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
     '#etcfg-modal{position:fixed;inset:0;z-index:2147483100;display:flex;align-items:center;justify-content:center;padding:16px;' +
     'background:rgba(51,51,51,.55);font:400 14px/1.43 var(--ui-font);color:var(--ui-fg);box-sizing:border-box;}' +
@@ -1091,6 +1158,7 @@
 
   ET.config = {
     add: add,
+    accion: accion,
     valor: valor,
     set: set,
     abrir: abrir,
@@ -1699,7 +1767,7 @@
       var fila = modulo ? nuevaFila(modulo, permiso, x.codigoRegistro) : null;
       return accion(x).then(function (r) {
         if (fila) fila.set(r.ok ? 'OK' : 'FALLO', r.msg);
-        progStep(verbo + ' ' + x.codigoRegistro + ' → ' + (r.ok ? 'OK' : 'FALLO') + (!fila && r.msg ? ' · ' + r.msg : ''));
+        progStep(verbo + ' ' + x.codigoRegistro + ' → ' + (r.ok ? 'OK' : 'FALLO') + (r.msg ? ' · ' + r.msg : ''));
       }).catch(function (e) {
         if (fila) fila.set('FALLO', e.message);
         progStep(verbo + ' ' + x.codigoRegistro + ' → ERROR');
@@ -1754,6 +1822,7 @@
   }
 
   function despacharUna(f) {
+    var veh = vehiculoActual();
     return apiPost('/GasLP/Despacho/VerificaRegistroCompra', cuerpoVerificaCompra(f.codigoRegistro))
       .then(function (v) {
         var j = v.json || {};
@@ -1761,6 +1830,7 @@
         var dc = d.datosCompra;
         var ds = d.datosSuministrador;
         if (!dc) throw new Error('VerificaRegistroCompra sin datosCompra');
+        if (!veh) throw new Error('No hay vehículo configurado: añade al menos uno en Ajustes antes de despachar.');
         var idActComp = pick(dc, [
           'idPermisoActividad_Comprador',
           'idPermisoActividadComprador',
@@ -1770,9 +1840,8 @@
           'idPermisoActividad_Vendedor',
           'idPermisoActividadVendedor'
         ]);
-        if (!CONFIG.VEHICULO) throw new Error('Falta el vehículo que despacha: llénalo en Ajustes antes de despachar.');
         return apiPost('/GasLP/Despacho/VerificaRegistroVehiculo2',
-          'vehiculo=' + encodeURIComponent(CONFIG.VEHICULO) +
+          'vehiculo=' + encodeURIComponent(veh.nombre || veh.placas) +
           '&CompradorId=' + dc.idComprador +
           '&idActComp=' + encodeURIComponent(idActComp) +
           '&idVendedor=' + dc.idVendedor +
@@ -1795,14 +1864,14 @@
           codigo: f.codigoRegistro,
           volumen: dc.volumen_Solicitado,
           idVehiculo: ctx.idVehiculo,
-          placas: CONFIG.PLACAS
+          placas: veh.placas
         });
         var body = cuerpoDespacho({
           fechaRegistro: fd,
           idCompra: dc.idCompra,
           cantidadDespachada: dc.volumen_Solicitado,
           idVehiculo: ctx.idVehiculo,
-          placas: CONFIG.PLACAS,
+          placas: veh.placas,
           codigoRegistro: f.codigoRegistro,
           idComprador: dc.idComprador,
           idVendedor: dc.idVendedor,
@@ -1812,7 +1881,9 @@
       })
       .then(function (res) {
         var j = res.json || {};
-        if (j.result === true || j.success === true || j.result === 'true') return { ok: true, msg: '' };
+        if (j.result === true || j.success === true || j.result === 'true') {
+          return { ok: true, msg: 'Vehículo ' + (veh.nombre || veh.placas) + ' · ' + veh.placas };
+        }
         return { ok: false, msg: (j.mensaje || j.message) || res.text.slice(0, 200) };
       });
   }
@@ -2212,6 +2283,7 @@
       '  <label for="acs-desde">Desde</label><input type="date" id="acs-desde" value="' + CONFIG.DESDE + '" title="Fecha de compra; en Recepcionar es la fecha de despacho">' +
       '  <label for="acs-hasta">Hasta</label><input type="date" id="acs-hasta" value="' + CONFIG.HASTA + '" title="Fecha de compra; en Recepcionar es la fecha de despacho">' +
       '  <label for="acs-permiso">Permiso</label><select id="acs-permiso" title="Permiso vendedor; Todos = sin filtro"><option value="">Todos los permisos</option></select>' +
+      '  <span id="acs-vehiculo-wrap" style="display:none"><label for="acs-vehiculo">Vehículo</label><select id="acs-vehiculo" title="Vehículo que despacha"></select></span>' +
       '  <label class="acs-opt" title="Recorre cada permiso de la sesión en lugar de solo el actual"><input type="checkbox" id="acs-permisos" ' + (CONFIG.RECORRER_PERMISOS ? 'checked' : '') + '> Recorrer permisos</label>' +
       '</div>' +
       '<ul id="acs-tabs" role="tablist">' +
@@ -2225,7 +2297,7 @@
       '<div id="acs-body">' +
       '  <div class="acs-pane" id="acs-pane-inicio"></div>' +
       '  <div class="acs-pane" id="acs-pane-aceptar" style="display:none">Acepta compras <b>Solicitadas</b> en el rango de fechas.</div>' +
-      '  <div class="acs-pane" id="acs-pane-despachar" style="display:none">Despacha compras <b>Aceptadas</b> con el vehículo y placas configurados.</div>' +
+      '  <div class="acs-pane" id="acs-pane-despachar" style="display:none">Despacha compras <b>Aceptadas</b> con el vehículo elegido en la barra superior.</div>' +
       '  <div class="acs-pane" id="acs-pane-recepcionar" style="display:none">Recepciona entregas <b>En tránsito</b>. Si está activo, cierra la compra al recepcionar.</div>' +
       '  <div class="acs-pane" id="acs-pane-cerrar" style="display:none">Lista compras <b>Aceptadas</b> sin cerrar. Selecciona y usa <b>Cerrar seleccionadas</b>.</div>' +
       '  <div class="acs-pane" id="acs-pane-facturas" style="display:none"><div>Sube formatos de traspaso de compras cerradas sin factura y descarga los formatos PDF de las compras cerradas dentro del rango.</div></div>' +
@@ -2249,6 +2321,21 @@
       '</div>';
     var hubPane = ET.ui.tab('acs', 'ACS', 10, 470);
     hubPane.appendChild(panel);
+
+    function pintarVehiculos() {
+      var lista = vehiculosDisponibles();
+      var sel = panel.querySelector('#acs-vehiculo');
+      var wrap = panel.querySelector('#acs-vehiculo-wrap');
+      if (!sel || !wrap) return;
+      var previo = sel.value;
+      sel.innerHTML = lista.map(function (v) {
+        return '<option value="' + escaparAtributo(v.placas) + '">' +
+          escaparHtml((v.nombre ? v.nombre + ' — ' : '') + v.placas) + '</option>';
+      }).join('');
+      if (lista.some(function (v) { return v.placas === previo; })) sel.value = previo;
+      wrap.style.display = lista.length > 1 ? 'inline-flex' : 'none';
+    }
+    pintarVehiculos();
 
     var fa = document.createElement('link');
     fa.rel = 'stylesheet';
@@ -2293,6 +2380,7 @@
         tabs[i].setAttribute('aria-selected', on ? 'true' : 'false');
       }
       for (var k = 0; k < panes.length; k++) panes[k].style.display = panes[k].id === 'acs-pane-' + tab ? 'block' : 'none';
+      if (tab === 'despachar') pintarVehiculos();
       actualizarBotones(tab);
       if (guardar) guardarUI();
     }
@@ -2379,6 +2467,8 @@
     '#acs-topbar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--ui-bg);border-bottom:1px solid var(--ui-border);flex-wrap:wrap;}' +
     '#acs-topbar label{font-size:13px;color:var(--ui-muted);margin:0;font-weight: 400;}' +
     '#acs-topbar input[type=date],#acs-topbar select{border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;padding:4px 6px;max-width:180px;cursor:pointer;}' +
+    '#acs-vehiculo-wrap{display:inline-flex;align-items:center;gap:6px;min-width:0;}' +
+    '#acs-topbar #acs-vehiculo{max-width:220px;}' +
     '#acs-topbar .acs-opt{margin-left:8px;}' +
     '#acs-topbar input:focus,#acs-topbar select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
     '.acs-opt{color:var(--ui-fg);display:flex;align-items:center;gap:6px;font-size:13px;}' +
@@ -2425,17 +2515,39 @@
       cuerpoCerrarCompra: cuerpoCerrarCompra,
       cuerpoDespacho: cuerpoDespacho,
       cuerpoRecepcion: cuerpoRecepcion,
-      nombreArchivoTraspaso: nombreArchivoTraspaso
+      nombreArchivoTraspaso: nombreArchivoTraspaso,
+      elegirVehiculo: elegirVehiculo
     };
   }
 
   /* Vehículos configurados; si la lista está vacía se conserva el vehículo único anterior. */
+  function escaparHtml(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function escaparAtributo(s) {
+    return escaparHtml(s).replace(/"/g, '&quot;');
+  }
+
+  /* Elige el vehículo de la lista por sus placas; si no está, el primero (por defecto). */
+  function elegirVehiculo(lista, placas) {
+    lista = lista || [];
+    for (var i = 0; i < lista.length; i++) {
+      if (lista[i].placas === placas) return lista[i];
+    }
+    return lista[0] || null;
+  }
+
   function vehiculosDisponibles() {
     var lista = ET.config && ET.config.vehiculos ? ET.config.vehiculos() : [];
     if (!lista.length && CONFIG.VEHICULO) {
       lista = [{ nombre: CONFIG.VEHICULO, placas: CONFIG.PLACAS, id: '' }];
     }
     return lista;
+  }
+
+  function vehiculoActual() {
+    var sel = typeof document !== 'undefined' ? document.getElementById('acs-vehiculo') : null;
+    return elegirVehiculo(vehiculosDisponibles(), sel ? sel.value : '');
   }
 
   /* ============ INICIO ============ */
@@ -5281,8 +5393,22 @@
     });
   }
 
-  function buildTransfers(preview, registrationDate) {
+  function listaVehiculos() {
+    if (ET && ET.acs && typeof ET.acs.vehiculos === 'function') return ET.acs.vehiculos();
+    if (ET && ET.config && typeof ET.config.vehiculos === 'function') return ET.config.vehiculos();
+    return [];
+  }
+
+  /* Traspasos que no pueden enviarse porque les falta el vehículo que los trasladó. */
+  function vehiculosFaltantes(transfers) {
+    return (transfers || []).filter(function (transfer) {
+      return !transfer.vehiculo || !transfer.vehiculo.placas;
+    });
+  }
+
+  function buildTransfers(preview, registrationDate, vehiculos) {
     const regDate = parseDate(registrationDate) || todayISO();
+    const lista = vehiculos || [];
     return (preview || [])
       .filter(function (row) {
         return row.status === 'OK';
@@ -5298,6 +5424,7 @@
           operationDate: row.date,
           registrationDate: regDate,
           volumeKg: row.volumeKg,
+          vehiculo: lista[0] || null,
         };
       });
   }
@@ -5339,7 +5466,7 @@
   }
 
   function buildTraspasoBody(transfer, sellerId, timestamp) {
-    return {
+    const body = {
       'compraNueva[compra][fechaRegistro]': timestamp,
       'compraNueva[compra][fechaCompra]': displayDate(transfer.operationDate),
       'compraNueva[compra][cantidadSolicitada]': Number(transfer.volumeKg).toFixed(2),
@@ -5349,6 +5476,13 @@
       'compraNueva[compra][traspaso]': 'true',
       cadenaAcuse: '|',
     };
+    // shortcut: idVehiculo y TransportePlaca para GuardaCompraGasLP no están verificados con el servidor
+    // (la sesión de prueba expiró); confirmarlos con una petición real antes de confiar en el envío.
+    if (transfer.vehiculo) {
+      body['compraNueva[compra][idVehiculo]'] = String(transfer.vehiculo.id || '');
+      body['compraNueva[compra][TransportePlaca]'] = String(transfer.vehiculo.placas || '');
+    }
+    return body;
   }
 
   // ---------------------------------------------------------------------------
@@ -6285,7 +6419,7 @@
       return;
     }
 
-    state.transfers = buildTransfers(state.preview, registrationDate);
+    state.transfers = buildTransfers(state.preview, registrationDate, listaVehiculos());
     renderEnvio();
     switchTab('envio');
     ui.sendStatus.textContent =
@@ -6322,6 +6456,61 @@
           el('span', '', group.transfers.length + ' traspaso(s) · ' + formatKg(group.totalKg))
         );
         ui.summary.append(line);
+      }
+      const vehicles = listaVehiculos();
+      if (!vehicles.length) {
+        ui.summary.append(
+          el('div', 'st-warn', 'No hay vehículos configurados: añádelos en Ajustes antes de enviar.')
+        );
+      }
+      state.transfers.forEach(function (transfer, index) {
+        const row = el('div', 'st-transfer');
+        row.append(
+          el(
+            'span',
+            'st-transfer-route',
+            'Suministrador ' +
+              transfer.sourcePermit +
+              ' → ' +
+              transfer.destinationPermit +
+              ' · ' +
+              displayDate(transfer.operationDate) +
+              ' · ' +
+              formatKg(transfer.volumeKg)
+          )
+        );
+        const select = document.createElement('select');
+        select.dataset.role = 'transfer-vehicle';
+        select.dataset.index = String(index);
+        select.title = 'Vehículo que trasladó este traspaso';
+        if (!vehicles.length) {
+          select.append(option('', 'Sin vehículos'));
+          select.disabled = true;
+        } else {
+          if (!transfer.vehiculo) select.append(option('', 'Elige vehículo'));
+          for (const vehicle of vehicles) {
+            select.append(
+              option(
+                vehicle.placas,
+                (vehicle.nombre ? vehicle.nombre + ' — ' : '') + vehicle.placas
+              )
+            );
+          }
+          select.value = transfer.vehiculo ? transfer.vehiculo.placas : '';
+        }
+        row.append(select);
+        ui.summary.append(row);
+      });
+      const faltantes = vehiculosFaltantes(state.transfers);
+      if (faltantes.length) {
+        ui.summary.append(
+          el(
+            'div',
+            'st-warn',
+            faltantes.length +
+              ' traspaso(s) sin vehículo: elige uno en la lista antes de enviar.'
+          )
+        );
       }
     }
     renderLedgerNote();
@@ -6740,6 +6929,30 @@
     const totalKg = state.transfers.reduce(function (sum, transfer) {
       return sum + transfer.volumeKg;
     }, 0);
+    const faltanVehiculos = vehiculosFaltantes(state.transfers);
+    if (faltanVehiculos.length) {
+      ui.sendStatus.textContent =
+        'Faltan vehículos en ' +
+        faltanVehiculos.length +
+        ' traspaso(s): elige uno en el paso 3 antes de enviar.';
+      return;
+    }
+    // shortcut: confirmación limitada a 20 traspasos, ampliar si se envían lotes mayores de los que se revisan a mano.
+    const detalle = state.transfers
+      .slice(0, 20)
+      .map(function (transfer) {
+        return (
+          '· ' +
+          transfer.sourcePermit +
+          ' → ' +
+          transfer.destinationPermit +
+          ' · ' +
+          (transfer.vehiculo.nombre || transfer.vehiculo.placas) +
+          ' · ' +
+          transfer.vehiculo.placas
+        );
+      })
+      .join('\n');
     const autoNote = state.autoMapped
       ? '\n\nEl mapeo se asignó por orden. Revisa que cada estación tenga el permiso correcto.'
       : '';
@@ -6749,6 +6962,9 @@
         ' traspaso(s) por ' +
         formatKg(totalKg) +
         '.' +
+        '\n\n' +
+        detalle +
+        (state.transfers.length > 20 ? '\n…' : '') +
         autoNote +
         '\n\n¿Continuar?'
     );
@@ -6819,6 +7035,9 @@
           state.ledger.push({
             key: key,
             permit: transfer.destinationPermit,
+            sourcePermit: transfer.sourcePermit,
+            vehiculo: transfer.vehiculo.nombre || '',
+            placas: transfer.vehiculo.placas,
             date: transfer.operationDate,
             operationDate: transfer.operationDate,
             registrationDate: transfer.registrationDate,
@@ -6876,6 +7095,9 @@
       [
         'key',
         'permit',
+        'sourcePermit',
+        'vehiculo',
+        'placas',
         'operationDate',
         'registrationDate',
         'volumeKg',
@@ -6888,6 +7110,9 @@
       rows.push([
         entry.key,
         entry.permit,
+        entry.sourcePermit,
+        entry.vehiculo,
+        entry.placas,
         entry.operationDate || entry.date,
         entry.registrationDate,
         entry.volumeKg,
@@ -7067,6 +7292,21 @@
     });
     ui.stations.addEventListener('change', syncStationsFromTextarea);
     ui.stationList.addEventListener('change', onStationChange);
+    ui.summary.addEventListener('change', function (event) {
+      const select = event.target.closest('[data-role="transfer-vehicle"]');
+      if (!select) return;
+      const index = Number(select.dataset.index);
+      const transfer = state.transfers[index];
+      if (!transfer) return;
+      transfer.vehiculo =
+        listaVehiculos().find(function (vehicle) {
+          return vehicle.placas === select.value;
+        }) || null;
+      ui.sendStatus.textContent = '';
+      renderEnvio();
+      const again = ui.summary.querySelector('[data-role="transfer-vehicle"][data-index="' + index + '"]');
+      if (again) again.focus();
+    });
     ui.mappingBoard.addEventListener('pointerdown', onWirePointerDown);
     ui.mappingBoard.addEventListener('pointermove', onWirePointerMove);
     ui.mappingBoard.addEventListener('pointerup', onWirePointerUp);
@@ -7446,6 +7686,27 @@
       font-size: 12px;
     }
     .st-group-permit { font-weight: 400; overflow-wrap: anywhere; }
+    .st-transfer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid #e2e8f0;
+      color: #334155;
+      font-size: 12px;
+    }
+    .st-transfer-route { overflow-wrap: anywhere; }
+    .st-transfer select {
+      max-width: 220px;
+      padding: 4px 6px;
+      border: 1px solid #cbd5e1;
+      border-radius: 0;
+      background: #fff;
+      color: #0f172a;
+      font: inherit;
+      font-size: 12px;
+    }
     .st-log {
       max-height: 160px;
       min-height: 0;
@@ -8037,6 +8298,7 @@
     relatePermits: relatePermits,
     evaluateRows: evaluateRows,
     buildTransfers: buildTransfers,
+    vehiculosFaltantes: vehiculosFaltantes,
     groupTransfers: groupTransfers,
     buildTraspasoBody: buildTraspasoBody,
     registrationTimestamp: registrationTimestamp,

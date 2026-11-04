@@ -362,3 +362,38 @@ test('los dos traspasos de El Gallo se reconocen aunque traspaso sea false', fun
     assert.equal(existing.has(key), true);
   }
 });
+
+test('buildTraspasoBody agrega idVehiculo y TransportePlaca si el traspaso tiene vehiculo', function () {
+  const body = api.buildTraspasoBody(
+    {
+      operationDate: '2026-10-28',
+      volumeKg: 2318,
+      vehiculo: { nombre: 'A002252', placas: 'JU47194', id: '77' },
+    },
+    '1295',
+    '2026-11-03 22:43:44'
+  );
+  assert.equal(body['compraNueva[compra][idVehiculo]'], '77');
+  assert.equal(body['compraNueva[compra][TransportePlaca]'], 'JU47194');
+});
+
+test('buildTransfers asigna el vehiculo por defecto y vehiculosFaltantes lo detecta', function () {
+  const rows = [
+    {
+      status: 'OK',
+      station: 'PLANTA',
+      destination: { permit: 'LP/2', id: '2' },
+      source: { permit: 'LP/1', id: '1' },
+      date: '2026-10-26',
+      volumeKg: 100,
+    },
+  ];
+  const vehiculo = { nombre: 'A002252', placas: 'JU47194', id: '77' };
+  const conVehiculo = api.buildTransfers(rows, '2026-11-03', [vehiculo]);
+  assert.deepEqual(conVehiculo[0].vehiculo, vehiculo);
+  assert.deepEqual(api.vehiculosFaltantes(conVehiculo), []);
+
+  const sinVehiculo = api.buildTransfers(rows, '2026-11-03', []);
+  assert.equal(sinVehiculo[0].vehiculo, null);
+  assert.deepEqual(api.vehiculosFaltantes(sinVehiculo), sinVehiculo);
+});

@@ -231,3 +231,14 @@ test('nombreArchivoTraspaso cae al nombre genérico con códigos raros y nunca d
   assert.equal(conSufijo, 'LP-1295-DIST-ES-2026.pdf');
   assert.equal(/[\\/:*?"<>|\r\n]/.test(conSufijo), false);
 });
+
+test('elegirVehiculo usa el de la barra y cae al primero por defecto', () => {
+  const lista = [
+    { nombre: 'A002252', placas: 'JU47194', id: '' },
+    { nombre: '', placas: 'MX12345', id: '77' },
+  ];
+  assert.deepEqual(acs.elegirVehiculo(lista, 'MX12345'), lista[1]);
+  assert.deepEqual(acs.elegirVehiculo(lista, 'NO-EXISTE'), lista[0]);
+  assert.deepEqual(acs.elegirVehiculo(lista, ''), lista[0]);
+  assert.equal(acs.elegirVehiculo([], 'JU47194'), null);
+});

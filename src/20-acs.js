@@ -584,7 +584,7 @@
       var fila = modulo ? nuevaFila(modulo, permiso, x.codigoRegistro) : null;
       return accion(x).then(function (r) {
         if (fila) fila.set(r.ok ? 'OK' : 'FALLO', r.msg);
-        progStep(verbo + ' ' + x.codigoRegistro + ' → ' + (r.ok ? 'OK' : 'FALLO') + (!fila && r.msg ? ' · ' + r.msg : ''));
+        progStep(verbo + ' ' + x.codigoRegistro + ' → ' + (r.ok ? 'OK' : 'FALLO') + (r.msg ? ' · ' + r.msg : ''));
       }).catch(function (e) {
         if (fila) fila.set('FALLO', e.message);
         progStep(verbo + ' ' + x.codigoRegistro + ' → ERROR');
@@ -639,6 +639,7 @@
   }
 
   function despacharUna(f) {
+    var veh = vehiculoActual();
     return apiPost('/GasLP/Despacho/VerificaRegistroCompra', cuerpoVerificaCompra(f.codigoRegistro))
       .then(function (v) {
         var j = v.json || {};
@@ -646,6 +647,7 @@
         var dc = d.datosCompra;
         var ds = d.datosSuministrador;
         if (!dc) throw new Error('VerificaRegistroCompra sin datosCompra');
+        if (!veh) throw new Error('No hay vehículo configurado: añade al menos uno en Ajustes antes de despachar.');
         var idActComp = pick(dc, [
           'idPermisoActividad_Comprador',
           'idPermisoActividadComprador',
@@ -655,9 +657,8 @@
           'idPermisoActividad_Vendedor',
           'idPermisoActividadVendedor'
         ]);
-        if (!CONFIG.VEHICULO) throw new Error('Falta el vehículo que despacha: llénalo en Ajustes antes de despachar.');
         return apiPost('/GasLP/Despacho/VerificaRegistroVehiculo2',
-          'vehiculo=' + encodeURIComponent(CONFIG.VEHICULO) +
+          'vehiculo=' + encodeURIComponent(veh.nombre || veh.placas) +
           '&CompradorId=' + dc.idComprador +
           '&idActComp=' + encodeURIComponent(idActComp) +
           '&idVendedor=' + dc.idVendedor +
@@ -680,14 +681,14 @@
           codigo: f.codigoRegistro,
           volumen: dc.volumen_Solicitado,
           idVehiculo: ctx.idVehiculo,
-          placas: CONFIG.PLACAS
+          placas: veh.placas
         });
         var body = cuerpoDespacho({
           fechaRegistro: fd,
           idCompra: dc.idCompra,
           cantidadDespachada: dc.volumen_Solicitado,
           idVehiculo: ctx.idVehiculo,
-          placas: CONFIG.PLACAS,
+          placas: veh.placas,
           codigoRegistro: f.codigoRegistro,
           idComprador: dc.idComprador,
           idVendedor: dc.idVendedor,
@@ -697,7 +698,9 @@
       })
       .then(function (res) {
         var j = res.json || {};
-        if (j.result === true || j.success === true || j.result === 'true') return { ok: true, msg: '' };
+        if (j.result === true || j.success === true || j.result === 'true') {
+          return { ok: true, msg: 'Vehículo ' + (veh.nombre || veh.placas) + ' · ' + veh.placas };
+        }
         return { ok: false, msg: (j.mensaje || j.message) || res.text.slice(0, 200) };
       });
   }
@@ -1097,6 +1100,7 @@
       '  <label for="acs-desde">Desde</label><input type="date" id="acs-desde" value="' + CONFIG.DESDE + '" title="Fecha de compra; en Recepcionar es la fecha de despacho">' +
       '  <label for="acs-hasta">Hasta</label><input type="date" id="acs-hasta" value="' + CONFIG.HASTA + '" title="Fecha de compra; en Recepcionar es la fecha de despacho">' +
       '  <label for="acs-permiso">Permiso</label><select id="acs-permiso" title="Permiso vendedor; Todos = sin filtro"><option value="">Todos los permisos</option></select>' +
+      '  <span id="acs-vehiculo-wrap" style="display:none"><label for="acs-vehiculo">Vehículo</label><select id="acs-vehiculo" title="Vehículo que despacha"></select></span>' +
       '  <label class="acs-opt" title="Recorre cada permiso de la sesión en lugar de solo el actual"><input type="checkbox" id="acs-permisos" ' + (CONFIG.RECORRER_PERMISOS ? 'checked' : '') + '> Recorrer permisos</label>' +
       '</div>' +
       '<ul id="acs-tabs" role="tablist">' +
@@ -1110,7 +1114,7 @@
       '<div id="acs-body">' +
       '  <div class="acs-pane" id="acs-pane-inicio"></div>' +
       '  <div class="acs-pane" id="acs-pane-aceptar" style="display:none">Acepta compras <b>Solicitadas</b> en el rango de fechas.</div>' +
-      '  <div class="acs-pane" id="acs-pane-despachar" style="display:none">Despacha compras <b>Aceptadas</b> con el vehículo y placas configurados.</div>' +
+      '  <div class="acs-pane" id="acs-pane-despachar" style="display:none">Despacha compras <b>Aceptadas</b> con el vehículo elegido en la barra superior.</div>' +
       '  <div class="acs-pane" id="acs-pane-recepcionar" style="display:none">Recepciona entregas <b>En tránsito</b>. Si está activo, cierra la compra al recepcionar.</div>' +
       '  <div class="acs-pane" id="acs-pane-cerrar" style="display:none">Lista compras <b>Aceptadas</b> sin cerrar. Selecciona y usa <b>Cerrar seleccionadas</b>.</div>' +
       '  <div class="acs-pane" id="acs-pane-facturas" style="display:none"><div>Sube formatos de traspaso de compras cerradas sin factura y descarga los formatos PDF de las compras cerradas dentro del rango.</div></div>' +
@@ -1134,6 +1138,21 @@
       '</div>';
     var hubPane = ET.ui.tab('acs', 'ACS', 10, 470);
     hubPane.appendChild(panel);
+
+    function pintarVehiculos() {
+      var lista = vehiculosDisponibles();
+      var sel = panel.querySelector('#acs-vehiculo');
+      var wrap = panel.querySelector('#acs-vehiculo-wrap');
+      if (!sel || !wrap) return;
+      var previo = sel.value;
+      sel.innerHTML = lista.map(function (v) {
+        return '<option value="' + escaparAtributo(v.placas) + '">' +
+          escaparHtml((v.nombre ? v.nombre + ' — ' : '') + v.placas) + '</option>';
+      }).join('');
+      if (lista.some(function (v) { return v.placas === previo; })) sel.value = previo;
+      wrap.style.display = lista.length > 1 ? 'inline-flex' : 'none';
+    }
+    pintarVehiculos();
 
     var fa = document.createElement('link');
     fa.rel = 'stylesheet';
@@ -1178,6 +1197,7 @@
         tabs[i].setAttribute('aria-selected', on ? 'true' : 'false');
       }
       for (var k = 0; k < panes.length; k++) panes[k].style.display = panes[k].id === 'acs-pane-' + tab ? 'block' : 'none';
+      if (tab === 'despachar') pintarVehiculos();
       actualizarBotones(tab);
       if (guardar) guardarUI();
     }
@@ -1264,6 +1284,8 @@
     '#acs-topbar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--ui-bg);border-bottom:1px solid var(--ui-border);flex-wrap:wrap;}' +
     '#acs-topbar label{font-size:13px;color:var(--ui-muted);margin:0;font-weight: 400;}' +
     '#acs-topbar input[type=date],#acs-topbar select{border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;padding:4px 6px;max-width:180px;cursor:pointer;}' +
+    '#acs-vehiculo-wrap{display:inline-flex;align-items:center;gap:6px;min-width:0;}' +
+    '#acs-topbar #acs-vehiculo{max-width:220px;}' +
     '#acs-topbar .acs-opt{margin-left:8px;}' +
     '#acs-topbar input:focus,#acs-topbar select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
     '.acs-opt{color:var(--ui-fg);display:flex;align-items:center;gap:6px;font-size:13px;}' +
@@ -1310,17 +1332,39 @@
       cuerpoCerrarCompra: cuerpoCerrarCompra,
       cuerpoDespacho: cuerpoDespacho,
       cuerpoRecepcion: cuerpoRecepcion,
-      nombreArchivoTraspaso: nombreArchivoTraspaso
+      nombreArchivoTraspaso: nombreArchivoTraspaso,
+      elegirVehiculo: elegirVehiculo
     };
   }
 
   /* Vehículos configurados; si la lista está vacía se conserva el vehículo único anterior. */
+  function escaparHtml(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function escaparAtributo(s) {
+    return escaparHtml(s).replace(/"/g, '&quot;');
+  }
+
+  /* Elige el vehículo de la lista por sus placas; si no está, el primero (por defecto). */
+  function elegirVehiculo(lista, placas) {
+    lista = lista || [];
+    for (var i = 0; i < lista.length; i++) {
+      if (lista[i].placas === placas) return lista[i];
+    }
+    return lista[0] || null;
+  }
+
   function vehiculosDisponibles() {
     var lista = ET.config && ET.config.vehiculos ? ET.config.vehiculos() : [];
     if (!lista.length && CONFIG.VEHICULO) {
       lista = [{ nombre: CONFIG.VEHICULO, placas: CONFIG.PLACAS, id: '' }];
     }
     return lista;
+  }
+
+  function vehiculoActual() {
+    var sel = typeof document !== 'undefined' ? document.getElementById('acs-vehiculo') : null;
+    return elegirVehiculo(vehiculosDisponibles(), sel ? sel.value : '');
   }
 
   /* ============ INICIO ============ */

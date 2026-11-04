@@ -10,6 +10,7 @@
   var CLAVE = 'update'; /* ET.store añade el prefijo easytrac: */
   var SILENCIO = 3 * 24 * 60 * 60 * 1000; // «Ahora no» calla 3 días
   var REVISION = 12 * 60 * 60 * 1000;     // y como mucho se mira dos veces al día
+  var ESPERA = 30 * 60 * 1000;            // tras un fallo de red, medio hora
 
   /* true si remota es más nueva que actual, comparando segmento a segmento. */
   function hayNueva(actual, remota) {
@@ -46,6 +47,8 @@
     '60%{opacity:1;transform:translateY(-4px) scale(1.012)}100%{opacity:1;transform:none}}',
     '@keyframes et-upd-out{to{opacity:0;transform:translateY(16px)}}',
     '@media (prefers-reduced-motion:reduce){#et-upd,#et-upd.et-upd-out{animation:none}}',
+    '#et-upd-aviso{position:fixed;left:16px;bottom:16px;z-index:2147482100;padding:9px 12px;background:var(--ui-bg);',
+    'border:1px solid var(--ui-border-strong);border-radius:0;font:400 13px/1.4 var(--ui-font);color:var(--ui-fg)}',
   ].join('');
 
   function cerrar(caja, luego) {
@@ -83,26 +86,63 @@
     document.body.appendChild(caja);
   }
 
-  function revisar() {
+  /* La marca de revisión solo se guarda cuando la consulta responde bien: si la red
+     falla, se reintenta a los 30 minutos en la visita siguiente en vez de callar 12 h. */
+  function revisar(forzar) {
     var st = ET.store.get(CLAVE, {}) || {};
     var ahora = Date.now();
-    if (st.hasta && ahora < st.hasta) return;
-    if (st.visto && ahora - st.visto < REVISION) return;
-    st.visto = ahora;
-    ET.store.set(CLAVE, st);
+    if (!forzar) {
+      if (st.hasta && ahora < st.hasta) return;
+      if (st.visto && ahora - st.visto < REVISION) return;
+      if (st.fallo && ahora - st.fallo < ESPERA) return;
+    }
     fetch(FUENTE, { cache: 'no-store' })
-      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
       .then(function (t) {
         var v = versionDe(t);
+        st = ET.store.get(CLAVE, {}) || {};
+        st.visto = Date.now();
+        delete st.fallo;
+        ET.store.set(CLAVE, st);
         if (v && hayNueva(ET.version, v)) mostrar(v);
+        else if (forzar) avisar('Ya tienes la última versión (' + ET.version + ').');
       })
-      .catch(function () { /* sin red: la próxima visita lo reintenta */ });
+      .catch(function () {
+        st = ET.store.get(CLAVE, {}) || {};
+        st.fallo = Date.now();
+        ET.store.set(CLAVE, st);
+        if (forzar) avisar('No se pudo consultar GitHub. Revisa tu red y vuelve a intentar.');
+      });
+  }
+
+  /* Respuesta breve en la esquina, para el botón manual de Ajustes. */
+  function avisar(texto) {
+    var caja = document.getElementById('et-upd-aviso');
+    if (caja) caja.parentNode.removeChild(caja);
+    caja = document.createElement('div');
+    caja.id = 'et-upd-aviso';
+    caja.textContent = texto;
+    (ET.ui.style || function () {})(CSS);
+    document.body.appendChild(caja);
+    setTimeout(function () { if (caja.parentNode) caja.parentNode.removeChild(caja); }, 5000);
   }
 
   ET.update = { revisar: revisar, hayNueva: hayNueva, versionDe: versionDe, fuente: FUENTE };
   if (typeof module !== 'undefined' && module.exports) module.exports = ET.update;
 
   if (typeof document !== 'undefined' && typeof fetch === 'function') {
-    ET.ready(function () { setTimeout(revisar, 4000); });
+    ET.ready(function () {
+      setTimeout(revisar, 4000);
+      if (ET.config && ET.config.accion) {
+        ET.config.accion({
+          seccion: 'Aplicación',
+          etiqueta: 'Buscar actualizaciones',
+          alPulsar: function () { revisar(true); },
+        });
+      }
+    });
   }
 })();

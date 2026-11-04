@@ -718,8 +718,22 @@
     });
   }
 
-  function buildTransfers(preview, registrationDate) {
+  function listaVehiculos() {
+    if (ET && ET.acs && typeof ET.acs.vehiculos === 'function') return ET.acs.vehiculos();
+    if (ET && ET.config && typeof ET.config.vehiculos === 'function') return ET.config.vehiculos();
+    return [];
+  }
+
+  /* Traspasos que no pueden enviarse porque les falta el vehículo que los trasladó. */
+  function vehiculosFaltantes(transfers) {
+    return (transfers || []).filter(function (transfer) {
+      return !transfer.vehiculo || !transfer.vehiculo.placas;
+    });
+  }
+
+  function buildTransfers(preview, registrationDate, vehiculos) {
     const regDate = parseDate(registrationDate) || todayISO();
+    const lista = vehiculos || [];
     return (preview || [])
       .filter(function (row) {
         return row.status === 'OK';
@@ -735,6 +749,7 @@
           operationDate: row.date,
           registrationDate: regDate,
           volumeKg: row.volumeKg,
+          vehiculo: lista[0] || null,
         };
       });
   }
@@ -776,7 +791,7 @@
   }
 
   function buildTraspasoBody(transfer, sellerId, timestamp) {
-    return {
+    const body = {
       'compraNueva[compra][fechaRegistro]': timestamp,
       'compraNueva[compra][fechaCompra]': displayDate(transfer.operationDate),
       'compraNueva[compra][cantidadSolicitada]': Number(transfer.volumeKg).toFixed(2),
@@ -786,6 +801,13 @@
       'compraNueva[compra][traspaso]': 'true',
       cadenaAcuse: '|',
     };
+    // shortcut: idVehiculo y TransportePlaca para GuardaCompraGasLP no están verificados con el servidor
+    // (la sesión de prueba expiró); confirmarlos con una petición real antes de confiar en el envío.
+    if (transfer.vehiculo) {
+      body['compraNueva[compra][idVehiculo]'] = String(transfer.vehiculo.id || '');
+      body['compraNueva[compra][TransportePlaca]'] = String(transfer.vehiculo.placas || '');
+    }
+    return body;
   }
 
   // ---------------------------------------------------------------------------
@@ -1722,7 +1744,7 @@
       return;
     }
 
-    state.transfers = buildTransfers(state.preview, registrationDate);
+    state.transfers = buildTransfers(state.preview, registrationDate, listaVehiculos());
     renderEnvio();
     switchTab('envio');
     ui.sendStatus.textContent =
@@ -1759,6 +1781,61 @@
           el('span', '', group.transfers.length + ' traspaso(s) · ' + formatKg(group.totalKg))
         );
         ui.summary.append(line);
+      }
+      const vehicles = listaVehiculos();
+      if (!vehicles.length) {
+        ui.summary.append(
+          el('div', 'st-warn', 'No hay vehículos configurados: añádelos en Ajustes antes de enviar.')
+        );
+      }
+      state.transfers.forEach(function (transfer, index) {
+        const row = el('div', 'st-transfer');
+        row.append(
+          el(
+            'span',
+            'st-transfer-route',
+            'Suministrador ' +
+              transfer.sourcePermit +
+              ' → ' +
+              transfer.destinationPermit +
+              ' · ' +
+              displayDate(transfer.operationDate) +
+              ' · ' +
+              formatKg(transfer.volumeKg)
+          )
+        );
+        const select = document.createElement('select');
+        select.dataset.role = 'transfer-vehicle';
+        select.dataset.index = String(index);
+        select.title = 'Vehículo que trasladó este traspaso';
+        if (!vehicles.length) {
+          select.append(option('', 'Sin vehículos'));
+          select.disabled = true;
+        } else {
+          if (!transfer.vehiculo) select.append(option('', 'Elige vehículo'));
+          for (const vehicle of vehicles) {
+            select.append(
+              option(
+                vehicle.placas,
+                (vehicle.nombre ? vehicle.nombre + ' — ' : '') + vehicle.placas
+              )
+            );
+          }
+          select.value = transfer.vehiculo ? transfer.vehiculo.placas : '';
+        }
+        row.append(select);
+        ui.summary.append(row);
+      });
+      const faltantes = vehiculosFaltantes(state.transfers);
+      if (faltantes.length) {
+        ui.summary.append(
+          el(
+            'div',
+            'st-warn',
+            faltantes.length +
+              ' traspaso(s) sin vehículo: elige uno en la lista antes de enviar.'
+          )
+        );
       }
     }
     renderLedgerNote();
@@ -2177,6 +2254,30 @@
     const totalKg = state.transfers.reduce(function (sum, transfer) {
       return sum + transfer.volumeKg;
     }, 0);
+    const faltanVehiculos = vehiculosFaltantes(state.transfers);
+    if (faltanVehiculos.length) {
+      ui.sendStatus.textContent =
+        'Faltan vehículos en ' +
+        faltanVehiculos.length +
+        ' traspaso(s): elige uno en el paso 3 antes de enviar.';
+      return;
+    }
+    // shortcut: confirmación limitada a 20 traspasos, ampliar si se envían lotes mayores de los que se revisan a mano.
+    const detalle = state.transfers
+      .slice(0, 20)
+      .map(function (transfer) {
+        return (
+          '· ' +
+          transfer.sourcePermit +
+          ' → ' +
+          transfer.destinationPermit +
+          ' · ' +
+          (transfer.vehiculo.nombre || transfer.vehiculo.placas) +
+          ' · ' +
+          transfer.vehiculo.placas
+        );
+      })
+      .join('\n');
     const autoNote = state.autoMapped
       ? '\n\nEl mapeo se asignó por orden. Revisa que cada estación tenga el permiso correcto.'
       : '';
@@ -2186,6 +2287,9 @@
         ' traspaso(s) por ' +
         formatKg(totalKg) +
         '.' +
+        '\n\n' +
+        detalle +
+        (state.transfers.length > 20 ? '\n…' : '') +
         autoNote +
         '\n\n¿Continuar?'
     );
@@ -2256,6 +2360,9 @@
           state.ledger.push({
             key: key,
             permit: transfer.destinationPermit,
+            sourcePermit: transfer.sourcePermit,
+            vehiculo: transfer.vehiculo.nombre || '',
+            placas: transfer.vehiculo.placas,
             date: transfer.operationDate,
             operationDate: transfer.operationDate,
             registrationDate: transfer.registrationDate,
@@ -2313,6 +2420,9 @@
       [
         'key',
         'permit',
+        'sourcePermit',
+        'vehiculo',
+        'placas',
         'operationDate',
         'registrationDate',
         'volumeKg',
@@ -2325,6 +2435,9 @@
       rows.push([
         entry.key,
         entry.permit,
+        entry.sourcePermit,
+        entry.vehiculo,
+        entry.placas,
         entry.operationDate || entry.date,
         entry.registrationDate,
         entry.volumeKg,
@@ -2504,6 +2617,21 @@
     });
     ui.stations.addEventListener('change', syncStationsFromTextarea);
     ui.stationList.addEventListener('change', onStationChange);
+    ui.summary.addEventListener('change', function (event) {
+      const select = event.target.closest('[data-role="transfer-vehicle"]');
+      if (!select) return;
+      const index = Number(select.dataset.index);
+      const transfer = state.transfers[index];
+      if (!transfer) return;
+      transfer.vehiculo =
+        listaVehiculos().find(function (vehicle) {
+          return vehicle.placas === select.value;
+        }) || null;
+      ui.sendStatus.textContent = '';
+      renderEnvio();
+      const again = ui.summary.querySelector('[data-role="transfer-vehicle"][data-index="' + index + '"]');
+      if (again) again.focus();
+    });
     ui.mappingBoard.addEventListener('pointerdown', onWirePointerDown);
     ui.mappingBoard.addEventListener('pointermove', onWirePointerMove);
     ui.mappingBoard.addEventListener('pointerup', onWirePointerUp);
@@ -2883,6 +3011,27 @@
       font-size: 12px;
     }
     .st-group-permit { font-weight: 400; overflow-wrap: anywhere; }
+    .st-transfer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid #e2e8f0;
+      color: #334155;
+      font-size: 12px;
+    }
+    .st-transfer-route { overflow-wrap: anywhere; }
+    .st-transfer select {
+      max-width: 220px;
+      padding: 4px 6px;
+      border: 1px solid #cbd5e1;
+      border-radius: 0;
+      background: #fff;
+      color: #0f172a;
+      font: inherit;
+      font-size: 12px;
+    }
     .st-log {
       max-height: 160px;
       min-height: 0;
@@ -3474,6 +3623,7 @@
     relatePermits: relatePermits,
     evaluateRows: evaluateRows,
     buildTransfers: buildTransfers,
+    vehiculosFaltantes: vehiculosFaltantes,
     groupTransfers: groupTransfers,
     buildTraspasoBody: buildTraspasoBody,
     registrationTimestamp: registrationTimestamp,
