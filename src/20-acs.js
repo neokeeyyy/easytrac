@@ -1164,7 +1164,7 @@
       panel.querySelector('#acs-thead').innerHTML = (tab === 'inicio' || tab === 'cerrar' || tab === 'facturas')
         ? '<tr><th></th><th>Registro</th><th>Estatus</th><th>Volumen</th><th>Fecha</th><th>Permiso</th></tr>'
         : '<tr><th>Módulo</th><th>Permiso</th><th>Registro</th><th>Estado</th><th>Detalle</th></tr>';
-      panel.querySelector('#acs-acciones').style.display = tab === 'facturas' ? 'none' : 'flex';
+      panel.querySelector('#acs-acciones').style.display = tab === 'facturas' ? 'none' : 'grid';
       panel.querySelector('#acs-facturas-acciones').style.display = tab === 'facturas' ? 'flex' : 'none';
     }
 
@@ -1265,7 +1265,7 @@
     '#acs-side{' +
     'position:static;width:auto;min-height:100%;display:flex;flex-direction:column;background:var(--ui-bg);color:var(--ui-fg);font-family:var(--ui-font);font-weight:400;font-size:14px;line-height:1.43;}' +
     '#acs-side *{box-sizing:border-box;}' +
-    '#acs-tabs{list-style:none;margin:0;padding:0;display:flex;overflow-x:auto;background:var(--ui-bg);border-bottom:1px solid var(--ui-border-strong);}' +
+    '#acs-tabs{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;overflow-x:visible;background:var(--ui-bg);border-bottom:1px solid var(--ui-border-strong);}' +
     '#acs-tabs li{flex:0 0 auto;padding:9px 12px;cursor:pointer;color:var(--ui-muted);font-size:13px;font-weight: 400;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid transparent;}' +
     '#acs-tabs li:hover{background:#f5f5f5;color:var(--ui-fg);}' +
     '#acs-tabs li.on{background:#f5f5f5;color:var(--ui-fg);border-bottom-color:var(--ui-muted);}' +
@@ -1284,7 +1284,7 @@
     '.acs-opt{color:var(--ui-fg);display:flex;align-items:center;gap:6px;font-size:13px;}' +
     '.acs-opt input{width:14px;height:14px;margin:0;cursor:pointer;}' +
     '.acs-pane{padding:10px 12px;font-size:13px;color:var(--ui-muted);background:var(--ui-bg);border-bottom:1px solid var(--ui-border);}' +
-    '#acs-acciones,#acs-facturas-acciones{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;padding:10px 12px;background:var(--ui-bg);border-bottom:1px solid var(--ui-border-strong);}' +
+    '#acs-acciones,#acs-facturas-acciones{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 12px;background:var(--ui-bg);border-bottom:1px solid var(--ui-border-strong);}' +
     '#acs-acciones{position:sticky;top:0;z-index:100;}' +
     '.acs-btn{width:100%;margin:0;padding:9px 10px;font:inherit;font-size:13px;color:var(--ui-fg);background:#f5f5f5;border:1px solid var(--ui-border-input);border-radius:0;cursor:pointer;white-space:nowrap;}' +
     '.acs-btn:hover{background:#e9e9e9;}' +

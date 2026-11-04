@@ -1,0 +1,19 @@
+- generic [ref=e1]:
+  - text: 
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - img "logoinicio" [ref=e6]
+      - generic [ref=e8]:
+        - generic [ref=e11]:
+          - generic [ref=e12]: ✉
+          - textbox "Correo electrónico" [active] [ref=e14]
+        - button "Siguiente" [ref=e17] [cursor=pointer]
+  - contentinfo [ref=e18]:
+    - generic [ref=e19]: Comisión Reguladora de Energía
+    - paragraph [ref=e23]: Boulevard Adolfo López Mateos Núm. 172, Col. Merced Gómez, C.P. 03930, Benito Juárez, CDMX, Tel. 01 55 5283 1515.
+    - generic [ref=e24]:
+      - link "Aviso de privacidad" [ref=e25] [cursor=pointer]:
+        - /url: "#"
+      - text: "|"
+      - link "Términos y condiciones" [ref=e26] [cursor=pointer]:
+        - /url: https://www.gob.mx/cms/uploads/attachment/file/427155/T_rminos_y_condiciones_de_uso_del_Siretrac_v1.0_190114.pdf
