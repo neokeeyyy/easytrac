@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.26'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.27'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -3095,6 +3095,22 @@
   }
 
   const nk = k => String(k == null ? '' : k).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+// Los cinco rótulos de la portada de acuses, en el orden de la plantilla.
+const LISTA_PORTADA = ['VENTA', 'NUEVO REGISTRO DE COMPRA', 'ACEPTAR REGISTRO DE COMPRA',
+  'ACEPTAR REGISTRO DE RECEPCION', 'CERRAR REGISTRO DE COMPRA'];
+
+function cuentaDeTipos(filas) {
+  const porNk = {};
+  LISTA_PORTADA.forEach(l => { porNk[nk(l)] = l; });
+  const cuenta = {};
+  LISTA_PORTADA.forEach(l => { cuenta[l] = 0; });
+  for (const r of filas || []) {
+    const l = porNk[nk(String((r.sub && r.sub.texto) || ''))];
+    if (l) cuenta[l] += 1;
+  }
+  return cuenta;
+}
   const safe = x => String(x).replace(/[\\/:*?"<>|]+/g, '_').trim();
   const seg = x => safe(x).replace(/\s+/g, ' ').replace(/[. ]+$/, '').slice(0, 90) || 'SIN_DATO';
   const esc = x => String(x == null ? '' : x).replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
@@ -3304,7 +3320,7 @@
 
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, cuentaDeTipos, LISTA_PORTADA };
   }
 
   // ===================== Arranque DOM =====================
@@ -3934,6 +3950,47 @@
         .map(([perm, grupo]) => ({ perm, filas: grupo.sort(cmp) }));
     }
 
+    // Portada según la plantilla de acuses: Arial Narrow en el papel, Helvetica en el PDF
+    // (pdf-lib solo trae las fuentes estándar; ver README).
+    const MESES3 = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
+
+    function partesFecha(f) {
+      const m = String(f || '').split('/');
+      return { d: Number(m[0]) || 0, m: Number(m[1]) || 0, a: Number(m[2]) || 0 };
+    }
+
+    function portada(doc, fuentes, perm, filas) {
+      const p = doc.addPage(PDFLib.PageSizes.A4);
+      const ancho = p.getWidth() - 112;
+      const t = (txt, size, bold, x, y) => {
+        const font = bold ? fuentes.fb : fuentes.f;
+        let s = size;
+        const w = font.widthOfTextAtSize(txt, s);
+        if (w > ancho) { s = Math.floor(size * ancho / w); }
+        const px = x === 'center' ? (p.getWidth() - font.widthOfTextAtSize(txt, s)) / 2 : x;
+        p.drawText(txt, { x: px, y: y, size: s, font: font });
+      };
+      const f1 = partesFecha(filas[0].fOp);
+      const f2 = partesFecha(filas[filas.length - 1].fOp);
+      const razon = (filas.map(r => (r.p && r.p.razon) || r.razon || '').find(Boolean) || 'SIN_DATO');
+      const mes = MESES3[f1.m - 1] || '';
+      const semanaMes = f1.d ? Math.ceil(f1.d / 7) : 0;
+      const iso = semanaISO(new Date(f1.a || 2000, (f1.m || 1) - 1, f1.d || 1));
+      const semanaAno = Number(iso.split('-W')[1]);
+      const anioISO = iso.split('-W')[0];
+      let y = 760;
+      t(perm === 'SIN_PERMISO' ? 'SIN PERMISO' : perm, 36, true, 'center', y);
+      t(razon, 36, true, 'center', y -= 50);
+      t('PERIODO ' + String(f1.d).padStart(2, '0') + ' ' + mes + ' – ' + String(f2.d).padStart(2, '0') + ' ' + (MESES3[f2.m - 1] || ''), 26, false, 56, y -= 66);
+      t('SEMANA ' + semanaMes + ' DEL MES ' + mes + ' DEL AÑO ' + (f1.a || ''), 22, true, 56, y -= 46);
+      t('SEMANA ' + semanaAno + ' DEL AÑO ' + anioISO, 22, true, 56, y -= 56);
+      t('RAZÓN SOCIAL: ' + razon, 22, true, 56, y -= 46);
+      t('ACUSES: ' + filas.length, 22, false, 56, y -= 46);
+      const cuenta = cuentaDeTipos(filas);
+      y -= 26;
+      for (const label of LISTA_PORTADA) t('•  ' + label + ' (' + (cuenta[label] || 0) + ')', 18, false, 76, y -= 32);
+    }
+
     async function imprimir() {
       if (analizando || descargando) { st('Espera a que termine el trabajo en curso'); return; }
       const inc = seleccionados();
@@ -3953,19 +4010,7 @@
 
       for (const { perm, filas: grupo } of ests) {
         st('Uniendo ' + perm + '…');
-        const p = doc.addPage(A4);
-        let y = 780;
-        const t = (txt, size, bold, x, dy) => { y -= (dy || 26); p.drawText(txt, { x: x == null ? 56 : x, y: y, size: size, font: bold ? fb : f }); };
-        t('Acuses por estación', 11, true, 56, 36);
-        t('Estación: ' + perm, 18, true, 56, 40);
-        const razon = grupo.map(r => r.razon).find(Boolean);
-        if (razon) t('Razón social: ' + razon, 10, false, 56, 26);
-        t('Acuses: ' + grupo.length, 11, true, 56, 28);
-        t('Del ' + fTxt(grupo[0].fOp) + ' al ' + fTxt(grupo[grupo.length - 1].fOp), 10, false, 56, 22);
-        y -= 14;
-        const porSub = new Map();
-        grupo.forEach(r => { const s = r.sub.texto || r.sub.sigla; porSub.set(s, (porSub.get(s) || 0) + 1); });
-        for (const [s, n] of porSub) t('· ' + s + ' (' + n + ')', 10, false, 70, 18);
+        portada(doc, { f, fb }, perm, grupo);
 
         for (const r of grupo) {
           const bytes = pdfCache.get(r.it.idAcuse);
@@ -3989,6 +4034,22 @@
       st('Imprimir: ' + nAcuses + ' acuses · ' + doc.getPageCount() + ' páginas' +
         (saltados ? ' · ' + saltados + ' sin PDF' : '') + (win ? ' · abierto' : ' · descargado'));
       } finally { descargando = false; }
+    }
+
+    // Solo portadas: una página por estación, sin los acuses.
+    async function descargarPortadas() {
+      const inc = seleccionados();
+      if (!inc.length) { st('No hay acuses seleccionados'); return; }
+      if (typeof PDFLib === 'undefined') { st('pdf-lib no cargó'); return; }
+      try {
+        const ests = estacionesDe(inc);
+        const doc = await PDFLib.PDFDocument.create();
+        const f = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+        const fb = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+        for (const { perm, filas: grupo } of ests) portada(doc, { f, fb }, perm, grupo);
+        descargar(new Blob([await doc.save()], { type: 'application/pdf' }), 'portadas_' + rangoTag() + '.pdf');
+        st('Portadas: ' + ests.length + ' estación(es) · ' + doc.getPageCount() + ' páginas');
+      } catch (e) { st('Error: ' + e.message); }
     }
 
     // ---------- Limpiar ----------
@@ -4070,6 +4131,7 @@
         <button id="sa-an" type="button" class="sa-btn go" title="Lee el listado y las cadenas de todos los permisos">Analizar</button>
         <button id="sa-zip" type="button" class="sa-btn" title="Descarga los acuses seleccionados">Descargar ZIP</button>
         <button id="sa-print" type="button" class="sa-btn" title="Une los seleccionados con portada por estación">Imprimir</button>
+        <button id="sa-covers" type="button" class="sa-btn" title="Descarga solo las portadas, una por estación">Portadas</button>
         <button id="sa-x" type="button" class="sa-btn stop" title="Aborta y vacía filas y caché">Limpiar</button>
       </div>
       <div class="sa-filtro">
@@ -4113,6 +4175,7 @@
     $('#sa-an').addEventListener('click', () => { analizar().catch(e => { if (!abortado(e)) st('Error: ' + e.message); }); });
     $('#sa-zip').addEventListener('click', () => { descargarZip().catch(e => { if (!abortado(e)) st('Error: ' + e.message); }); });
     $('#sa-print').addEventListener('click', () => { imprimir().catch(e => { if (!abortado(e)) st('Error: ' + e.message); }); });
+    $('#sa-covers').addEventListener('click', () => { descargarPortadas().catch(e => st('Error: ' + e.message)); });
     $('#sa-x').addEventListener('click', limpiar);
     $('#sa-bus').addEventListener('input', aplicarFiltro);
 
@@ -5579,6 +5642,7 @@
     if (esPaginaES) reanudarCola();
 
   ET.venta = ET.venta || {};
+  ET.venta.xlsxTexto = xlsxTexto;
 })();
 
 /* ---- src/50-fecha.js ---- */

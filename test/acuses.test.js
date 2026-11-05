@@ -151,3 +151,21 @@ test('permisosDeTabla lee la tabla #example igual que el escáner de traspasos',
   assert.deepEqual(ps[0], { id: '111', codigo: 'LP/14432/DIST/PLA/2016', razon: 'GAS DE OJUELOS SA DE CV', actividad: 'Distribución' });
   assert.equal(ps[1].id, '222');
 });
+
+test('cuentaDeTipos agrupa por tipo con los cinco rotulos de la portada', function () {
+  const filas = [
+    { sub: { texto: 'Venta' } },
+    { sub: { texto: 'VENTA' } },
+    { sub: { texto: 'Aceptar registro de recepción' } },
+    { sub: { texto: 'Nuevo Registro de Compra' } },
+    { sub: { texto: 'Otro tipo raro' } },
+    { sub: null }
+  ];
+  const c = api.cuentaDeTipos(filas);
+  assert.deepEqual(Object.keys(c), api.LISTA_PORTADA);
+  assert.equal(c.VENTA, 2);
+  assert.equal(c['NUEVO REGISTRO DE COMPRA'], 1);
+  assert.equal(c['ACEPTAR REGISTRO DE COMPRA'], 0);
+  assert.equal(c['ACEPTAR REGISTRO DE RECEPCION'], 1);
+  assert.equal(c['CERRAR REGISTRO DE COMPRA'], 0);
+});

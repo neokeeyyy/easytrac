@@ -1308,4 +1308,5 @@
     if (esPaginaES) reanudarCola();
 
   ET.venta = ET.venta || {};
+  ET.venta.xlsxTexto = xlsxTexto;
 })();
