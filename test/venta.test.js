@@ -2,7 +2,7 @@
 
 const test = require('bun:test').test;
 const assert = require('node:assert');
-const { norm, parsear, parsearEstaciones, parsearReporte, colaDeEstaciones, resolverFilas, valoresDeLinea } = require('../src/40-venta.js');
+const { norm, parsear, parsearEstaciones, parsearReporte, colaDeEstaciones, resolverFilas, valoresDeLinea, xlsxHojaATexto, rutaHojaReporte } = require('../src/40-venta.js');
 const { readFileSync } = require('node:fs');
 
 
@@ -273,6 +273,43 @@ test('parsearEstaciones: nombre en fila aparte y TIPO en la cuarta fila anterior
   assert.equal(est[0].permiso, '99887');
   assert.equal(est[0].tipo, 'ESTACIÓN DE SERVICIO');
   assert.equal(est[0].sucursal, 'CENTRAL');
+});
+
+test('xlsxHojaATexto: celdas compartidas, numeros, inlineStr y huecos como TSV', () => {
+  const sharedStringsXml =
+    '<sst count="3" uniqueCount="3">' +
+    '<si><t>ESTACION NORTE</t></si>' +
+    '<si><t>LP/17590</t></si>' +
+    '<si><t>sin usar</t></si>' +
+    '</sst>';
+  const sheetXml =
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+    '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"><v>42</v></c>' +
+    '<c r="C1" s="9"/><c r="D1" t="s"><v>1</v></c></row>' +
+    '<row r="2"><c r="A2" t="inlineStr"><is><t>Volumen &amp; Litros</t></is></c>' +
+    '<c r="B2"><v>7</v></c><c r="D2"><v>3</v></c></row>' +
+    '</sheetData></worksheet>';
+
+  const tsv = xlsxHojaATexto({ sheetXml, sharedStringsXml });
+
+  assert.equal(tsv, 'ESTACION NORTE\t42\t\tLP/17590\nVolumen & Litros\t7\t\t3');
+});
+
+test('rutaHojaReporte: resuelve REPORTE por rId y falla si no existe', () => {
+  const workbook =
+    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' +
+    '<sheet name="DATOS" sheetId="4" r:id="rId1"/>' +
+    '<sheet name="REPORTE" sheetId="2" r:id="rId3"/>' +
+    '</sheets></workbook>';
+  const rels =
+    '<Relationships><Relationship Id="rId1" Type="worksheet" Target="worksheets/sheet1.xml"/>' +
+    '<Relationship Id="rId3" Type="worksheet" Target="worksheets/sheet3.xml"/></Relationships>';
+
+  assert.equal(rutaHojaReporte(workbook, rels), 'xl/worksheets/sheet3.xml');
+  assert.throws(
+    () => rutaHojaReporte('<workbook><sheets><sheet name="DATOS" r:id="rId1"/></sheets></workbook>', rels),
+    /El archivo no tiene una hoja REPORTE/
+  );
 });
 
 

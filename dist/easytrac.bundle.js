@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.25'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.26'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -4289,7 +4289,10 @@
             colaDeEstaciones: colaDeEstaciones,
             sectorDesdeCelda: sectorDesdeCelda,
             valoresDeLinea: valoresDeLinea,
-            resolverFilas: resolverFilas
+            resolverFilas: resolverFilas,
+            xlsxTexto: xlsxTexto,
+            xlsxHojaATexto: xlsxHojaATexto,
+            rutaHojaReporte: rutaHojaReporte
         };
         return;
     }
@@ -4300,12 +4303,17 @@
     var esPaginaES = !esPaginaDisPla && $('#idVolumenVehiculo').length > 0;
     if (!esPaginaDisPla && !esPaginaES) return;
 
-    ET.ui.tab('venta', 'Venta', 40, 300).innerHTML =
+    var paneVenta = ET.ui.tab('venta', 'Venta', 40, 300);
+    paneVenta.innerHTML =
         '<div style="font-weight: 400;margin-bottom:6px">Auto-fill de ventas</div>' +
         '<div style="font-size:12px;line-height:1.45;color:#333">Copia el bloque de ventas de tu Excel y p\u00E9galo (Ctrl+V) en esta p\u00E1gina. ' +
         'El script llena fecha, autoconsumo y las filas de Auto-tanque y Recipientes, y verifica cada campo. ' +
         'Si pegas el REPORTE completo, aparece la lista de estaciones para subirlas una por una.<br><br>' +
         'Tipo de p\u00E1gina: <b>' + (esPaginaDisPla ? 'Distribuidor por Planta' : 'Estaci\u00F3n de Servicio') + '</b></div>' +
+        '<div id="siretrac-venta-drop" style="margin-bottom:8px;padding:14px 10px;text-align:center;' +
+        'border:2px dashed var(--ui-border-strong);border-radius:0;background:var(--ui-bg);' +
+        'font:400 12px/1.4 var(--ui-font);color:var(--ui-muted)">' +
+        'Arrastra aquí el REPORTE (.xlsm) o pégalo con Ctrl+V</div>' +
         '<div id="siretrac-venta-estaciones"></div>' +
         '<div id="siretrac-venta-cola"></div>';
 
@@ -4574,6 +4582,146 @@
 
     function parsearReporte(texto) {
         return { municipios: parsear(texto), estaciones: parsearEstaciones(texto) };
+    }
+
+    // --- REPORTE como archivo Excel -------------------------------------------
+    // La hoja REPORTE se convierte a TSV para reutilizar el mismo camino que el
+    // pegado. El XML se procesa aquí, sin DOM, para poder probarlo en Node.
+
+    function xmlTexto(s) {
+        var mapa = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+        return (s || '').replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, function (m, c) {
+            if (c.charAt(0) === '#') {
+                var n = c.charAt(1).toLowerCase() === 'x'
+                    ? parseInt(c.slice(2), 16)
+                    : parseInt(c.slice(1), 10);
+                return isNaN(n) ? m : String.fromCharCode(n);
+            }
+            return mapa[c.toLowerCase()] || m;
+        });
+    }
+
+    function textosDe(xml) {
+        var ts = xml.match(/<t\b[^>]*>([\s\S]*?)<\/t>/g) || [];
+        var txt = '';
+        for (var i = 0; i < ts.length; i++) {
+            txt += xmlTexto(ts[i].replace(/^<t\b[^>]*>/, '').replace(/<\/t>$/, ''));
+        }
+        return txt;
+    }
+
+    function columnaDeRef(ref) {
+        var m = /^([A-Z]+)/i.exec(ref || '');
+        if (!m) return 0;
+        var letras = m[1].toUpperCase();
+        var n = 0;
+        for (var i = 0; i < letras.length; i++) n = n * 26 + (letras.charCodeAt(i) - 64);
+        return n - 1;
+    }
+
+    function resolverRutaHoja(target) {
+        var t = target.charAt(0) === '/' ? target.slice(1) : 'xl/' + target;
+        var partes = [];
+        t.split('/').forEach(function (p) {
+            if (!p || p === '.') return;
+            if (p === '..') partes.pop();
+            else partes.push(p);
+        });
+        return partes.join('/');
+    }
+
+    // workbook.xml + workbook.xml.rels -> ruta de la hoja REPORTE.
+    function rutaHojaReporte(workbookXml, relsXml) {
+        var hojas = (workbookXml || '').match(/<sheet\b[^>]*\/?>/g) || [];
+        var rid = null;
+        for (var i = 0; i < hojas.length; i++) {
+            var nombre = /name="([^"]*)"/i.exec(hojas[i]);
+            var id = /r:id="([^"]*)"/i.exec(hojas[i]);
+            if (nombre && id && xmlTexto(nombre[1]).trim().toUpperCase() === 'REPORTE') {
+                rid = id[1];
+                break;
+            }
+        }
+        if (rid) {
+            var rels = (relsXml || '').match(/<Relationship\b[^>]*\/?>/g) || [];
+            for (var j = 0; j < rels.length; j++) {
+                var relId = /Id="([^"]*)"/i.exec(rels[j]);
+                var target = /Target="([^"]*)"/i.exec(rels[j]);
+                if (relId && target && relId[1] === rid) return resolverRutaHoja(xmlTexto(target[1]));
+            }
+        }
+        throw new Error('El archivo no tiene una hoja REPORTE');
+    }
+
+    function xlsxHojaATexto(datos) {
+        var sheetXml = (datos && datos.sheetXml) || '';
+        var sharedXml = (datos && datos.sharedStringsXml) || '';
+
+        var compartidas = [];
+        var sis = sharedXml.match(/<si\b[^>]*>[\s\S]*?<\/si>/g) || [];
+        for (var i = 0; i < sis.length; i++) {
+            // <rPh> son lecturas fonéticas: no forman parte del valor de la celda.
+            compartidas.push(textosDe(sis[i].replace(/<rPh\b[\s\S]*?<\/rPh>/g, '')));
+        }
+
+        var filas = [];
+        var maxFila = -1;
+        var maxCol = -1;
+        var filasXml = sheetXml.match(/<row\b[^>]*>[\s\S]*?<\/row>|<row\b[^>]*\/>/g) || [];
+        for (var f = 0; f < filasXml.length; f++) {
+            var fila = filasXml[f];
+            var rn = /\br="(\d+)"/.exec(fila);
+            var nFila = rn ? parseInt(rn[1], 10) - 1 : f;
+            var celdas = fila.match(/<c\b[^>]*\/>|<c\b[^>]*>[\s\S]*?<\/c>/g) || [];
+            for (var c = 0; c < celdas.length; c++) {
+                var celda = celdas[c];
+                var ref = /\br="([A-Za-z]+\d+)"/.exec(celda);
+                var col = ref ? columnaDeRef(ref[1]) : c;
+                var tipo = /\bt="([^"]*)"/.exec(celda);
+                var valor = '';
+                if (tipo && tipo[1] === 'inlineStr') {
+                    valor = textosDe(celda);
+                } else {
+                    var v = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(celda);
+                    if (v) {
+                        valor = xmlTexto(v[1]);
+                        if (tipo && tipo[1] === 's') valor = compartidas[parseInt(valor, 10)] || '';
+                    }
+                }
+                if (!filas[nFila]) filas[nFila] = [];
+                filas[nFila][col] = valor;
+                if (valor !== '') {
+                    if (nFila > maxFila) maxFila = nFila;
+                    if (col > maxCol) maxCol = col;
+                }
+            }
+        }
+
+        var lineas = [];
+        for (var k = 0; k <= maxFila; k++) {
+            var celdasFila = filas[k] || [];
+            var linea = [];
+            for (var m = 0; m <= maxCol; m++) linea.push(celdasFila[m] == null ? '' : celdasFila[m]);
+            while (linea.length && linea[linea.length - 1] === '') linea.pop();
+            lineas.push(linea.join('\t'));
+        }
+        return lineas.join('\n');
+    }
+
+    async function xlsxTexto(buffer) {
+        if (typeof JSZip === 'undefined') throw new Error('JSZip no está disponible');
+        var zip = await JSZip.loadAsync(buffer);
+        function leer(ruta) {
+            var f = zip.file(ruta);
+            return f ? f.async('string') : Promise.resolve('');
+        }
+        var ruta = rutaHojaReporte(await leer('xl/workbook.xml'), await leer('xl/_rels/workbook.xml.rels'));
+        var sheetXml = await leer(ruta);
+        if (!sheetXml) throw new Error('El archivo no tiene una hoja REPORTE');
+        return xlsxHojaATexto({
+            sheetXml: sheetXml,
+            sharedStringsXml: await leer('xl/sharedStrings.xml')
+        });
     }
 
     function colaDeEstaciones(estaciones, fechas) {
@@ -5327,15 +5475,10 @@
         });
     }
 
-    document.addEventListener('paste', function (e) {
-        var cd = e.clipboardData || window.clipboardData;
-        var texto = cd ? cd.getData('text/plain') : '';
-        if (!texto || texto.indexOf('\t') < 0) return;
-
+    // Mismo camino para el texto pegado y para el archivo soltado.
+    function procesarTexto(texto) {
         var reporte = parsearReporte(texto);
         if (reporte.estaciones.length) {
-            e.preventDefault();
-            e.stopPropagation();
             pintarEstaciones(reporte.estaciones, reporte.municipios.fechas);
             if (esPaginaDisPla) {
                 var p = reporte.municipios;
@@ -5343,7 +5486,7 @@
                 p.bloques.forEach(function (b) { lineasVenta += b.lineas.length; });
                 if (p.fechas.length && lineasVenta >= 4) llenar(texto, p);
             }
-            return;
+            return true;
         }
 
         pintarEstaciones([], []);
@@ -5352,21 +5495,85 @@
             var p2 = parsear(texto);
             var lineasVenta2 = 0;
             p2.bloques.forEach(function (b) { lineasVenta2 += b.lineas.length; });
-            if (!p2.fechas.length || lineasVenta2 < 4) return;
-            e.preventDefault();
-            e.stopPropagation();
+            if (!p2.fechas.length || lineasVenta2 < 4) return false;
             llenar(texto, p2);
-            return;
+            return true;
         }
 
         if (esPaginaES) {
             var pe = parsearES(texto);
-            if (pe.fechas.length < 5 || pe.ventas.length < 7) return;
+            if (pe.fechas.length < 5 || pe.ventas.length < 7) return false;
+            fillES(texto, pe);
+            return true;
+        }
+        return false;
+    }
+
+    function avisoDrop(msg) {
+        var drop = document.getElementById('siretrac-venta-drop');
+        if (!drop) return;
+        drop.textContent = msg;
+        drop.style.borderColor = 'var(--ui-danger)';
+        drop.style.color = 'var(--ui-danger)';
+    }
+
+    async function leerReporte(file) {
+        var nombre = (file && file.name ? file.name : '').toLowerCase();
+        if (/\.(xlsm|xlsx)$/.test(nombre)) return xlsxTexto(await file.arrayBuffer());
+        if (/\.(csv|txt)$/.test(nombre)) return file.text();
+        throw new Error('formato no soportado; usa .xlsm, .xlsx, .csv o .txt');
+    }
+
+    function montarDrop() {
+        var drop = document.getElementById('siretrac-venta-drop');
+        if (!paneVenta || !drop) return;
+        var normal = function () {
+            drop.textContent = 'Arrastra aquí el REPORTE (.xlsm) o pégalo con Ctrl+V';
+            drop.style.borderColor = '';
+            drop.style.color = '';
+        };
+        // Sin esto el navegador abre el archivo soltado en la página.
+        paneVenta.addEventListener('dragover', function (e) { e.preventDefault(); e.stopPropagation(); });
+        paneVenta.addEventListener('drop', function (e) { e.preventDefault(); e.stopPropagation(); });
+        drop.addEventListener('dragover', function (e) {
             e.preventDefault();
             e.stopPropagation();
-            fillES(texto, pe);
-        }
+            drop.style.borderColor = 'var(--ui-primary)';
+            drop.style.color = 'var(--ui-primary)';
+        });
+        drop.addEventListener('dragleave', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            drop.style.borderColor = '';
+            drop.style.color = '';
+        });
+        drop.addEventListener('drop', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            drop.style.borderColor = '';
+            drop.style.color = '';
+            var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+            if (!file) return;
+            drop.textContent = 'Leyendo ' + file.name + '…';
+            leerReporte(file).then(function (texto) {
+                if (procesarTexto(texto)) normal();
+                else avisoDrop('No encontré un REPORTE en el archivo');
+            }).catch(function (err) {
+                avisoDrop('No pude leer el archivo: ' + (err && err.message ? err.message : err));
+            });
+        });
+    }
+
+    document.addEventListener('paste', function (e) {
+        var cd = e.clipboardData || window.clipboardData;
+        var texto = cd ? cd.getData('text/plain') : '';
+        if (!texto || texto.indexOf('\t') < 0) return;
+        if (!procesarTexto(texto)) return;
+        e.preventDefault();
+        e.stopPropagation();
     });
+
+    montarDrop();
 
     pintarCola();
     if (esPaginaES) reanudarCola();
