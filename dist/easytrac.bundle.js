@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.30'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.31'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -4074,7 +4074,7 @@ function partesFecha(f) {
       t('ACUSES: ' + filas.length, 22, false, 56, y -= 46);
       // Recuento por subtipo y, debajo, los códigos de registro de cada uno: la lista
       // sigue hasta el pie de la página y salta a otra hoja si no cabe.
-      const alto = 28, xCod = 76;
+      const alto = 28, altoCod = 18, xCod = 76;
       const salta = () => { p = doc.addPage(PDFLib.PageSizes.A4); y = 800; };
       y -= 30;
       for (const g of gruposPorSubtipo(filas)) {
@@ -4084,14 +4084,14 @@ function partesFecha(f) {
         let linea = '';
         for (const codigo of g.codigos) {
           const prueba = linea ? linea + '    ' + codigo : codigo;
-          if (linea && fuentes.f.widthOfTextAtSize(prueba, 14) > ancho - 20) {
-            t(linea, 14, false, xCod, y);
-            y -= alto;
+          if (linea && fuentes.f.widthOfTextAtSize(prueba, 10) > ancho - 20) {
+            t(linea, 10, false, xCod, y);
+            y -= altoCod;
             if (y < 70) salta();
             linea = codigo;
           } else linea = prueba;
         }
-        if (linea) { t(linea, 14, false, xCod, y); y -= alto; }
+        if (linea) { t(linea, 10, false, xCod, y); y -= altoCod; }
         y -= 6;
       }
     }
