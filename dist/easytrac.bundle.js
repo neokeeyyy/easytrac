@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.27'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.28'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -3100,16 +3100,52 @@
 const LISTA_PORTADA = ['VENTA', 'NUEVO REGISTRO DE COMPRA', 'ACEPTAR REGISTRO DE COMPRA',
   'ACEPTAR REGISTRO DE RECEPCION', 'CERRAR REGISTRO DE COMPRA'];
 
+// Semana del mes contando semanas de lunes a domingo: la semana que contiene el día 1 es la 1.
+function semanaDelMes(d) {
+  const f = d instanceof Date ? d : new Date(d);
+  if (isNaN(f)) return 0;
+  const lunes = new Date(f.getFullYear(), f.getMonth(), f.getDate());
+  lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
+  const uno = new Date(f.getFullYear(), f.getMonth(), 1);
+  uno.setDate(uno.getDate() - ((uno.getDay() + 6) % 7));
+  return Math.round((lunes - uno) / 604800000) + 1;
+}
+
 function cuentaDeTipos(filas) {
-  const porNk = {};
-  LISTA_PORTADA.forEach(l => { porNk[nk(l)] = l; });
+  const corte = {
+    NRC: 'NUEVO REGISTRO DE COMPRA', ARC: 'ACEPTAR REGISTRO DE COMPRA',
+    ARR: 'ACEPTAR REGISTRO DE RECEPCION', CRC: 'CERRAR REGISTRO DE COMPRA'
+  };
   const cuenta = {};
   LISTA_PORTADA.forEach(l => { cuenta[l] = 0; });
   for (const r of filas || []) {
-    const l = porNk[nk(String((r.sub && r.sub.texto) || ''))];
+    const s = (r && r.sub) || {};
+    // El texto del subtipo no siempre basta (los acuses de venta llegan como "VENTA" y
+    // sin sigla), así que también miramos tipo, operación y el tipo de acuse del listado.
+    const t = nk([s.clave, s.tipo, s.op, s.texto, r && r.it && r.it.tipoAcuse].join(' '));
+    let l = corte[String(s.sigla || '').toUpperCase()];
+    if (!l) {
+      if (/recepcion|recepc/.test(t)) l = 'ACEPTAR REGISTRO DE RECEPCION';
+      else if (/cerr/.test(t)) l = 'CERRAR REGISTRO DE COMPRA';
+      else if (/acept/.test(t)) l = 'ACEPTAR REGISTRO DE COMPRA';
+      else if (/venta/.test(t)) l = 'VENTA';
+      else if (/nuevo|registro|compra/.test(t)) l = 'NUEVO REGISTRO DE COMPRA';
+    }
     if (l) cuenta[l] += 1;
   }
   return cuenta;
+}
+
+// Fecha a partes sueltas. La portada recibe el periodo como Date (d1/d2 del análisis),
+// antes llegaba el timestamp de la fecha de operación y salía "PERIODO 00 – 00".
+function partesFecha(f) {
+  if (f instanceof Date || typeof f === 'number') {
+    const d = f instanceof Date ? f : new Date(f);
+    return isNaN(d) ? { d: 0, m: 0, a: 0 }
+      : { d: d.getDate(), m: d.getMonth() + 1, a: d.getFullYear() };
+  }
+  const m = String(f || '').split('/');
+  return { d: Number(m[0]) || 0, m: Number(m[1]) || 0, a: Number(m[2]) || 0 };
 }
   const safe = x => String(x).replace(/[\\/:*?"<>|]+/g, '_').trim();
   const seg = x => safe(x).replace(/\s+/g, ' ').replace(/[. ]+$/, '').slice(0, 90) || 'SIN_DATO';
@@ -3320,7 +3356,7 @@ function cuentaDeTipos(filas) {
 
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, cuentaDeTipos, LISTA_PORTADA };
+    module.exports = { dmy, semanaDe, semanaISO, semanaDelMes, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, cuentaDeTipos, partesFecha, LISTA_PORTADA };
   }
 
   // ===================== Arranque DOM =====================
@@ -3340,6 +3376,7 @@ function cuentaDeTipos(filas) {
     let filas = [];                 // una fila por acuse en rango
     let sel = new Set();            // n de las filas seleccionadas
     let anchor = null, foco = null;
+    let periodo = null;             // {d1, d2} del último análisis: manda en la portada
     let cancel = false, analizando = false, descargando = false;
     let ctrl = new AbortController();
 
@@ -3499,15 +3536,77 @@ function cuentaDeTipos(filas) {
       throw new Error(ultimo + ' (tras 3 intentos)');
     }
 
-    // Dedupe por idAcuse y también por petición en vuelo.
+    // Cache en disco (IndexedDB): un acuse ya bajado se reutiliza en la próxima visita
+    // mientras siga siendo un PDF válido. No se borra al pulsar Limpiar: ese es el punto.
+    const IDB_BASE = 'easytrac-acuses', IDB_ALMACEN = 'pdfs', IDB_TOPE = 600;
+    let idbP = null, idbAltas = 0;
+
+    function idb() {
+      if (idbP) return idbP;
+      idbP = new Promise((ok, no) => {
+        if (typeof indexedDB === 'undefined') { no(new Error('sin IndexedDB')); return; }
+        const p = indexedDB.open(IDB_BASE, 1);
+        p.onupgradeneeded = () => {
+          const d = p.result;
+          if (!d.objectStoreNames.contains(IDB_ALMACEN)) d.createObjectStore(IDB_ALMACEN);
+        };
+        p.onsuccess = () => ok(p.result);
+        p.onerror = () => no(p.error || new Error('IndexedDB no abrió'));
+      });
+      return idbP;
+    }
+
+    async function enDisco(verbo, fn) {
+      let d;
+      try { d = await idb(); } catch (e) { return null; }
+      return new Promise(ok => {
+        try {
+          const tx = d.transaction(IDB_ALMACEN, verbo);
+          const req = fn(tx.objectStore(IDB_ALMACEN));
+          req.onsuccess = () => ok(req.result == null ? null : req.result);
+          req.onerror = () => ok(null);
+          tx.onabort = () => ok(null);
+        } catch (e) { ok(null); }
+      });
+    }
+
+    async function leerDisco(id) {
+      const v = await enDisco('readonly', s => s.get(id));
+      const b = v && (v.b || v);
+      if (!b || !b.length) return null;
+      const bytes = b instanceof Uint8Array ? b : new Uint8Array(b);
+      return esPdf(bytes) ? bytes : null;   // cabecera inválida = se vuelve a pedir
+    }
+
+    // shortcut: poda por lote cada 25 altas cuando pasa del tope; sin índice por fecha.
+    async function podaDisco() {
+      const todo = await enDisco('readonly', s => s.getAll());
+      if (!todo || todo.length <= IDB_TOPE) return;
+      const sobran = todo.slice().sort((a, b) => (a.t || 0) - (b.t || 0)).slice(0, todo.length - IDB_TOPE);
+      for (const v of sobran) await enDisco('readwrite', s => s.delete(v.id));
+    }
+
+    function guardarDisco(id, b) {
+      enDisco('readwrite', s => s.put({ id, b, t: Date.now() }, id)).then(() => {
+        if (++idbAltas % 25 === 0) podaDisco();
+      });
+    }
+
     function pdfDe(it) {
       const id = it.idAcuse;
       if (pdfCache.has(id)) return Promise.resolve(pdfCache.get(id));
       if (pdfProm.has(id)) return pdfProm.get(id);
-      const p = bajarPdf(it).then(b => { pdfCache.set(id, b); pdfProm.delete(id); return b; },
-        e => { pdfProm.delete(id); throw e; });
-      pdfProm.set(id, p);
-      return p;
+      const p = (async () => {
+        const guardado = await leerDisco(id);
+        if (guardado) { pdfCache.set(id, guardado); return guardado; }
+        const b = await bajarPdf(it);
+        pdfCache.set(id, b);
+        guardarDisco(id, b);
+        return b;
+      })();
+      const q = p.then(b => { pdfProm.delete(id); return b; }, e => { pdfProm.delete(id); throw e; });
+      pdfProm.set(id, q);
+      return q;
     }
 
     // Adelanta los PDFs en segundo plano: el hover y el ZIP ya los encuentran en pdfCache.
@@ -3612,6 +3711,7 @@ function cuentaDeTipos(filas) {
       if (!d1 || !d2) { st('Pon la semana o el rango de fechas'); return; }
       if (d1 > d2) { st('El rango está al revés'); return; }
       analizando = true; cancel = false; ctrl = new AbortController();
+      periodo = { d1, d2 };
       filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0;
       render(); st('Analizando…');
       try { await barrido(d1, d2); }
@@ -3954,10 +4054,6 @@ function cuentaDeTipos(filas) {
     // (pdf-lib solo trae las fuentes estándar; ver README).
     const MESES3 = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 
-    function partesFecha(f) {
-      const m = String(f || '').split('/');
-      return { d: Number(m[0]) || 0, m: Number(m[1]) || 0, a: Number(m[2]) || 0 };
-    }
 
     function portada(doc, fuentes, perm, filas) {
       const p = doc.addPage(PDFLib.PageSizes.A4);
@@ -3970,11 +4066,13 @@ function cuentaDeTipos(filas) {
         const px = x === 'center' ? (p.getWidth() - font.widthOfTextAtSize(txt, s)) / 2 : x;
         p.drawText(txt, { x: px, y: y, size: s, font: font });
       };
-      const f1 = partesFecha(filas[0].fOp);
-      const f2 = partesFecha(filas[filas.length - 1].fOp);
+      // El periodo es el que se analizó, no el del primer y último acuse: si el rango pedido
+      // es más ancho que los acuses encontrados, la portada debe decir lo que se pidió.
+      const f1 = partesFecha(periodo ? periodo.d1 : filas[0].fOp);
+      const f2 = partesFecha(periodo ? periodo.d2 : filas[filas.length - 1].fOp);
       const razon = (filas.map(r => (r.p && r.p.razon) || r.razon || '').find(Boolean) || 'SIN_DATO');
       const mes = MESES3[f1.m - 1] || '';
-      const semanaMes = f1.d ? Math.ceil(f1.d / 7) : 0;
+      const semanaMes = f1.d ? semanaDelMes(new Date(f1.a || 2000, (f1.m || 1) - 1, f1.d || 1)) : 0;
       const iso = semanaISO(new Date(f1.a || 2000, (f1.m || 1) - 1, f1.d || 1));
       const semanaAno = Number(iso.split('-W')[1]);
       const anioISO = iso.split('-W')[0];
@@ -4058,6 +4156,7 @@ function cuentaDeTipos(filas) {
       try { ctrl.abort(); } catch (e) { /* ya abortado */ }
       ctrl = new AbortController();
       filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0;
+      periodo = null;
       pdfCache.clear(); pdfProm.clear();
       prefetchToken++;
       $('#sa-lista').innerHTML = '';

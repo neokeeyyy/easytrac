@@ -169,3 +169,35 @@ test('cuentaDeTipos agrupa por tipo con los cinco rotulos de la portada', functi
   assert.equal(c['ACEPTAR REGISTRO DE RECEPCION'], 1);
   assert.equal(c['CERRAR REGISTRO DE COMPRA'], 0);
 });
+
+test('cuentaDeTipos clasifica la forma real del listado (venta sin subtipo y siglas)', function () {
+  const filas = [
+    { it: { tipoAcuse: 'VENTA' }, sub: { texto: '', sigla: 'SIN_TIPO', clave: 'SIN_TIPO' } },
+    { it: { tipoAcuse: 'VENTA' }, sub: { texto: '', sigla: 'SIN_TIPO', clave: 'SIN_TIPO' } },
+    { it: { tipoAcuse: 'NUEVO REGISTRO DE COMPRA' }, sub: { texto: 'Nuevo registro de compra', sigla: 'NRC', clave: 'nuevo-compra' } },
+    { it: { tipoAcuse: 'ACEPTAR REGISTRO DE COMPRA' }, sub: { texto: '', sigla: 'ARC', clave: 'aceptar-compra' } },
+    { it: { tipoAcuse: 'ACEPTAR REGISTRO DE RECEPCION' }, sub: { texto: '', sigla: 'ARR', clave: 'aceptar-recepcion' } },
+    { it: { tipoAcuse: 'CERRAR REGISTRO DE COMPRA' }, sub: { texto: '', sigla: 'CRC', clave: 'cerrar-compra' } }
+  ];
+  const c = api.cuentaDeTipos(filas);
+  assert.equal(c.VENTA, 2);
+  assert.equal(c['NUEVO REGISTRO DE COMPRA'], 1);
+  assert.equal(c['ACEPTAR REGISTRO DE COMPRA'], 1);
+  assert.equal(c['ACEPTAR REGISTRO DE RECEPCION'], 1);
+  assert.equal(c['CERRAR REGISTRO DE COMPRA'], 1);
+  assert.equal(Object.values(c).reduce((a, b) => a + b, 0), filas.length);
+});
+
+test('partesFecha acepta el Date del periodo y el texto DD/MM/AAAA', function () {
+  assert.deepEqual(api.partesFecha(new Date(2026, 9, 12)), { d: 12, m: 10, a: 2026 });
+  assert.deepEqual(api.partesFecha(new Date(2026, 9, 18)), { d: 18, m: 10, a: 2026 });
+  assert.deepEqual(api.partesFecha('18/10/2026'), { d: 18, m: 10, a: 2026 });
+  assert.deepEqual(api.partesFecha(null), { d: 0, m: 0, a: 0 });
+});
+
+test('semanaDelMes numera las semanas de lunes a domingo', function () {
+  assert.equal(api.semanaDelMes(new Date(2026, 9, 12)), 3);   // oct 2026 empieza jueves
+  assert.equal(api.semanaDelMes(new Date(2026, 9, 18)), 3);
+  assert.equal(api.semanaDelMes(new Date(2026, 9, 1)), 1);
+  assert.equal(api.semanaDelMes(new Date(2026, 9, 31)), 5);
+});
