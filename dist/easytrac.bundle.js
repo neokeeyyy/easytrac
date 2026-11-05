@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.35'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.36'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -3366,9 +3366,10 @@ function partesFecha(f) {
     const BUSCA = '/GasLP/Administracion/BuscaAcuse';
     const WORKERS = 10;
     const AVISOS = [];
-    const ESTRAT = { modo: 'global', activo: null };
+    const ESTRAT = { modo: 'global', activo: null, llave: '' };
     const pdfCache = new Map();     // idAcuse -> Uint8Array
     const pdfProm = new Map();      // idAcuse -> promesa en vuelo (dedupe)
+    const cadenaCache = new Map();  // idAcuse -> cadena original ya leída
 
     let filas = [];                 // una fila por acuse en rango
     let sel = new Set();            // n de las filas seleccionadas
@@ -3535,17 +3536,19 @@ function partesFecha(f) {
 
     // Cache en disco (IndexedDB): un acuse ya bajado se reutiliza en la próxima visita
     // mientras siga siendo un PDF válido. No se borra al pulsar Limpiar: ese es el punto.
-    const IDB_BASE = 'easytrac-acuses', IDB_ALMACEN = 'pdfs', IDB_TOPE = 600;
-    let idbP = null, idbAltas = 0;
+    const IDB_BASE = 'easytrac-acuses', IDB_ALMACEN = 'pdfs', IDB_CADENAS = 'cadenas',
+      IDB_TOPE = 600, IDB_TOPE_CAD = 3000;
+    let idbP = null, idbAltas = 0, idbAltasCad = 0;
 
     function idb() {
       if (idbP) return idbP;
       idbP = new Promise((ok, no) => {
         if (typeof indexedDB === 'undefined') { no(new Error('sin IndexedDB')); return; }
-        const p = indexedDB.open(IDB_BASE, 1);
+        const p = indexedDB.open(IDB_BASE, 2);
         p.onupgradeneeded = () => {
           const d = p.result;
           if (!d.objectStoreNames.contains(IDB_ALMACEN)) d.createObjectStore(IDB_ALMACEN);
+          if (!d.objectStoreNames.contains(IDB_CADENAS)) d.createObjectStore(IDB_CADENAS);
         };
         p.onsuccess = () => ok(p.result);
         p.onerror = () => no(p.error || new Error('IndexedDB no abrió'));
@@ -3553,13 +3556,13 @@ function partesFecha(f) {
       return idbP;
     }
 
-    async function enDisco(verbo, fn) {
+    async function enDisco(verbo, fn, almacen) {
       let d;
       try { d = await idb(); } catch (e) { return null; }
       return new Promise(ok => {
         try {
-          const tx = d.transaction(IDB_ALMACEN, verbo);
-          const req = fn(tx.objectStore(IDB_ALMACEN));
+          const tx = d.transaction(almacen || IDB_ALMACEN, verbo);
+          const req = fn(tx.objectStore(almacen || IDB_ALMACEN));
           req.onsuccess = () => ok(req.result == null ? null : req.result);
           req.onerror = () => ok(null);
           tx.onabort = () => ok(null);
@@ -3576,16 +3579,28 @@ function partesFecha(f) {
     }
 
     // shortcut: poda por lote cada 25 altas cuando pasa del tope; sin índice por fecha.
-    async function podaDisco() {
-      const todo = await enDisco('readonly', s => s.getAll());
-      if (!todo || todo.length <= IDB_TOPE) return;
-      const sobran = todo.slice().sort((a, b) => (a.t || 0) - (b.t || 0)).slice(0, todo.length - IDB_TOPE);
-      for (const v of sobran) await enDisco('readwrite', s => s.delete(v.id));
+    async function podaDisco(almacen, tope) {
+      const todo = await enDisco('readonly', s => s.getAll(), almacen);
+      if (!todo || todo.length <= tope) return;
+      const sobran = todo.slice().sort((a, b) => (a.t || 0) - (b.t || 0)).slice(0, todo.length - tope);
+      for (const v of sobran) await enDisco('readwrite', s => s.delete(v.id), almacen);
     }
 
     function guardarDisco(id, b) {
       enDisco('readwrite', s => s.put({ id, b, t: Date.now() }, id)).then(() => {
-        if (++idbAltas % 25 === 0) podaDisco();
+        if (++idbAltas % 25 === 0) podaDisco(IDB_ALMACEN, IDB_TOPE);
+      });
+    }
+
+    // La cadena original de un acuse no cambia: se guarda en disco y no se vuelve a pedir.
+    async function leerCadena(id) {
+      const v = await enDisco('readonly', s => s.get(id), IDB_CADENAS);
+      return v && v.c ? v.c : null;
+    }
+
+    function guardarCadena(id, c) {
+      enDisco('readwrite', s => s.put({ id, c, t: Date.now() }, id), IDB_CADENAS).then(() => {
+        if (++idbAltasCad % 25 === 0) podaDisco(IDB_CADENAS, IDB_TOPE_CAD);
       });
     }
 
@@ -3621,11 +3636,20 @@ function partesFecha(f) {
     }
 
     async function pideCadena(it, intentos = 3) {
+      const id = it && it.idAcuse;
+      if (id && cadenaCache.has(id)) return cadenaCache.get(id);
+      if (id) {
+        const guardada = await leerCadena(id);
+        if (guardada) { cadenaCache.set(id, guardada); return guardada; }
+      }
       for (let i = 0; i < intentos; i++) {
         try {
           const html = await (await post('/GasLP/Administracion/VerAcuse', { idAcuse: it.idAcuse }, 0)).text();
           const c = parseCadena(html);
-          if (c) return c;
+          if (c) {
+            if (id) { cadenaCache.set(id, c); guardarCadena(id, c); }
+            return c;
+          }
         } catch (e) {
           if (e.name === 'AbortError' || e.fatal) return null;
         }
@@ -3724,6 +3748,7 @@ function partesFecha(f) {
       if (!permisos.length) AVISOS.push('no se pudieron leer los permisos: se barrió solo el permiso activo');
 
       const desde = new Date(d1); desde.setDate(desde.getDate() - 7);   // margen de 7 días
+      const hasta = new Date(d2); hasta.setDate(hasta.getDate() + 7);   // margen simétrico: la fecha de operación puede diferir de la de acuse
       const cand = [];
       const paginaDe = async (pag, p) => {
         const data = { filtro: '', pagina: pag };
@@ -3731,43 +3756,53 @@ function partesFecha(f) {
         return (await post(BUSCA, data)).json();
       };
 
-      // Sin corte por fecha superior: se sigue hasta que las páginas dejan de tener Fecha Acuse
-      // dentro del margen. La inclusión final es por fecha de OPERACIÓN.
+      // La lista viene de más reciente a más antigua. Se piden las páginas en lotes de 4
+      // (sin pausa entre ellas) y se corta al pasar el margen inferior.
       const lista = async (p, etiqueta) => {
-        let pag = 1, fin = 1, viejas = 0;
+        let fin = 1, viejas = 0, pag = 1;
         while (pag <= fin && !cancel) {
-          let r;
-          try { r = await paginaDe(pag, p); }
-          catch (e) {
-            if (!abortado(e)) AVISOS.push(etiqueta + ' · página ' + pag + ': ' + e.message);
-            return;
+          const nums = [];
+          for (let k = 0; k < 4 && pag + k <= fin; k++) nums.push(pag + k);
+          const res = await Promise.all(nums.map(n => paginaDe(n, p).then(r => r, e => ({ error: e }))));
+          for (let j = 0; j < res.length; j++) {
+            const r = res[j], n = nums[j];
+            if (r.error) {
+              if (!abortado(r.error)) AVISOS.push(etiqueta + ' · página ' + n + ': ' + r.error.message);
+              return;
+            }
+            fin = Math.max(fin, (r.item1 && r.item1.paginaFinal) || 1);
+            const items = r.item2 || [];
+            let maxF = null;
+            for (let i = 0; i < items.length; i++) {
+              const it = items[i], f = dmy(it.fechaAcuse);
+              if (f && (!maxF || f > maxF)) maxF = f;
+              if (!f || f < desde || f > hasta) continue;
+              cand.push({ it, p, orden: n * 1000 + i });
+            }
+            st(etiqueta + ' · pág. ' + n + '/' + fin + ' · ' + cand.length + ' acuses');
+            if (!maxF || maxF < desde) { if (++viejas >= 2) return; } else viejas = 0;
           }
-          fin = Math.max(1, (r.item1 && r.item1.paginaFinal) || 1);
-          const items = r.item2 || [];
-          let maxF = null;
-          for (let i = 0; i < items.length; i++) {
-            const it = items[i], f = dmy(it.fechaAcuse);
-            if (f && (!maxF || f > maxF)) maxF = f;
-            if (!f || f < desde) continue;
-            cand.push({ it, p, orden: pag * 1000 + i });
-          }
-          st(etiqueta + ' · pág. ' + pag + '/' + fin + ' · ' + cand.length + ' acuses');
-          if (!maxF || maxF < desde) { if (++viejas >= 2) break; } else viejas = 0;
-          pag++;
-          await sleep(120);
+          pag = nums[nums.length - 1] + 1;
         }
       };
 
       let det = { modo: 'global', activo: null };
       if (permisos.length) {
-        try {
-          det = await detectaEstrategia(permisos, st);
-        } catch (e) {
-          if (abortado(e)) return;
-          AVISOS.push('no se pudo detectar cómo se recorre el listado: ' + e.message);
-          det = { modo: 'sesion', activo: null };
+        const codigos = permisos.map(p => p.codigo);
+        const llave = codigos.slice().sort().join('|');
+        if (ESTRAT.llave === llave) {
+          det = { modo: ESTRAT.modo, activo: permisoEnPantalla(new Set(codigos)) || ESTRAT.activo };
+        } else {
+          try {
+            det = await detectaEstrategia(permisos, st);
+          } catch (e) {
+            if (abortado(e)) return;
+            AVISOS.push('no se pudo detectar cómo se recorre el listado: ' + e.message);
+            det = { modo: 'sesion', activo: null };
+          }
+          if (cancel) return;
+          ESTRAT.llave = llave;
         }
-        if (cancel) return;
         ESTRAT.modo = det.modo; ESTRAT.activo = det.activo || null;
         st('Modo de permisos: ' + ({ global: 'el listado ya trae todos', param: 'filtro por permiso', sesion: 'cambio de permiso en sesión' }[det.modo] || det.modo));
       }
@@ -3802,7 +3837,7 @@ function partesFecha(f) {
         vistos.add(id);
         finales.push(c);
       }
-      if (!finales.length) { st('Sin acuses en el rango'); return; }
+      if (!finales.length) { ESTRAT.llave = ''; st('Sin acuses en el rango'); return; }
 
       const total = finales.length;
       const tmp = finales.map(c => ({ it: c.it, p: c.p, n: 0, enRango: false, dup: false, aprox: false,
