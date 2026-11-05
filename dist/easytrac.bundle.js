@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.31'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.32'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -615,6 +615,13 @@
     return m ? m[1] : '';
   }
 
+  /* GitHub raw cachea el archivo 5 minutos. El fetch de revisar() va con no-store, pero
+     la pestaña de instalación sí reutilizaría la copia del navegador y Violentmonkey
+     ofrecería «Reinstalar» con la versión vieja. El ?v= fuerza una descarga nueva. */
+  function instalarUrl(v) {
+    return FUENTE + '?v=' + encodeURIComponent(v || Date.now());
+  }
+
   var CSS = [
     '#et-upd{position:fixed;left:16px;bottom:16px;z-index:2147482100;width:320px;box-sizing:border-box;',
     'padding:12px;background:var(--ui-bg);border:1px solid var(--ui-border-strong);border-radius:0;',
@@ -661,7 +668,7 @@
       if (!b) return;
       if (b.getAttribute('data-x') === 'go') {
         cerrar(caja);
-        window.open(FUENTE, '_blank');
+        window.open(instalarUrl(v), '_blank');
         return;
       }
       var st = ET.store.get(CLAVE, {}) || {};
@@ -716,7 +723,7 @@
     setTimeout(function () { if (caja.parentNode) caja.parentNode.removeChild(caja); }, 5000);
   }
 
-  ET.update = { revisar: revisar, hayNueva: hayNueva, versionDe: versionDe, fuente: FUENTE };
+  ET.update = { revisar: revisar, hayNueva: hayNueva, versionDe: versionDe, instalarUrl: instalarUrl, fuente: FUENTE };
   if (typeof module !== 'undefined' && module.exports) module.exports = ET.update;
 
   if (typeof document !== 'undefined' && typeof fetch === 'function') {

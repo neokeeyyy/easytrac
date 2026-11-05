@@ -29,3 +29,7 @@ test('versionDe saca el @version de la cabecera publicada', () => {
 test('la fuente apunta al mismo archivo que @updateURL', () => {
   expect(update.fuente).toBe('https://raw.githubusercontent.com/neokeeyyy/easytrac/main/EasyTrac.user.js');
 });
+
+test('instalarUrl añade la versión para saltar la caché del navegador', () => {
+  expect(update.instalarUrl('1.0.32')).toBe(update.fuente + '?v=1.0.32');
+});
