@@ -152,40 +152,30 @@ test('permisosDeTabla lee la tabla #example igual que el escáner de traspasos',
   assert.equal(ps[1].id, '222');
 });
 
-test('cuentaDeTipos agrupa por tipo con los cinco rotulos de la portada', function () {
+test('gruposPorSubtipo cuenta por el subtipo del listado y guarda sus codigos', function () {
   const filas = [
-    { sub: { texto: 'Venta' } },
-    { sub: { texto: 'VENTA' } },
-    { sub: { texto: 'Aceptar registro de recepción' } },
-    { sub: { texto: 'Nuevo Registro de Compra' } },
-    { sub: { texto: 'Otro tipo raro' } },
-    { sub: null }
+    { nor: '1001', sub: { texto: 'Venta' } },
+    { nor: '1002', sub: { texto: 'VENTA' } },
+    { nor: '1003', sub: { texto: 'Aceptar registro de recepción' } },
+    { nor: '1004', it: { tipoAcuse: 'Nuevo Registro de Compra' }, sub: { texto: '', sigla: 'NRC' } },
+    { nor: 'SIN_NOR', it: { tipoAcuse: 'Nuevo Registro de Compra' }, sub: { texto: '', sigla: 'NRC' } }
   ];
-  const c = api.cuentaDeTipos(filas);
-  assert.deepEqual(Object.keys(c), api.LISTA_PORTADA);
-  assert.equal(c.VENTA, 2);
-  assert.equal(c['NUEVO REGISTRO DE COMPRA'], 1);
-  assert.equal(c['ACEPTAR REGISTRO DE COMPRA'], 0);
-  assert.equal(c['ACEPTAR REGISTRO DE RECEPCION'], 1);
-  assert.equal(c['CERRAR REGISTRO DE COMPRA'], 0);
+  const g = api.gruposPorSubtipo(filas);
+  assert.deepEqual(g.map(x => x.label), ['VENTA', 'ACEPTAR REGISTRO DE RECEPCIÓN', 'NUEVO REGISTRO DE COMPRA']);
+  assert.deepEqual(g.map(x => x.n), [2, 1, 2]);
+  assert.deepEqual(g[0].codigos, ['1001', '1002']);
+  assert.deepEqual(g[1].codigos, ['1003']);
+  assert.deepEqual(g[2].codigos, ['1004']);
 });
 
-test('cuentaDeTipos clasifica la forma real del listado (venta sin subtipo y siglas)', function () {
-  const filas = [
-    { it: { tipoAcuse: 'VENTA' }, sub: { texto: '', sigla: 'SIN_TIPO', clave: 'SIN_TIPO' } },
-    { it: { tipoAcuse: 'VENTA' }, sub: { texto: '', sigla: 'SIN_TIPO', clave: 'SIN_TIPO' } },
-    { it: { tipoAcuse: 'NUEVO REGISTRO DE COMPRA' }, sub: { texto: 'Nuevo registro de compra', sigla: 'NRC', clave: 'nuevo-compra' } },
-    { it: { tipoAcuse: 'ACEPTAR REGISTRO DE COMPRA' }, sub: { texto: '', sigla: 'ARC', clave: 'aceptar-compra' } },
-    { it: { tipoAcuse: 'ACEPTAR REGISTRO DE RECEPCION' }, sub: { texto: '', sigla: 'ARR', clave: 'aceptar-recepcion' } },
-    { it: { tipoAcuse: 'CERRAR REGISTRO DE COMPRA' }, sub: { texto: '', sigla: 'CRC', clave: 'cerrar-compra' } }
-  ];
-  const c = api.cuentaDeTipos(filas);
-  assert.equal(c.VENTA, 2);
-  assert.equal(c['NUEVO REGISTRO DE COMPRA'], 1);
-  assert.equal(c['ACEPTAR REGISTRO DE COMPRA'], 1);
-  assert.equal(c['ACEPTAR REGISTRO DE RECEPCION'], 1);
-  assert.equal(c['CERRAR REGISTRO DE COMPRA'], 1);
-  assert.equal(Object.values(c).reduce((a, b) => a + b, 0), filas.length);
+test('gruposPorSubtipo usa la sigla cuando el subtipo viene vacio', function () {
+  const g = api.gruposPorSubtipo([
+    { nor: '2001', it: { tipoAcuse: 'VENTA' }, sub: { texto: '', sigla: 'SIN_TIPO' } },
+    { nor: '2002', sub: { texto: '', sigla: 'CRC' } },
+    { nor: '2003', sub: null }
+  ]);
+  assert.deepEqual(g.map(x => x.label), ['VENTA', 'CRC', 'SIN TIPO']);
+  assert.deepEqual(g.map(x => x.n), [1, 1, 1]);
 });
 
 test('partesFecha acepta el Date del periodo y el texto DD/MM/AAAA', function () {

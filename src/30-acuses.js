@@ -77,10 +77,6 @@
 
   const nk = k => String(k == null ? '' : k).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
-// Los cinco rótulos de la portada de acuses, en el orden de la plantilla.
-const LISTA_PORTADA = ['VENTA', 'NUEVO REGISTRO DE COMPRA', 'ACEPTAR REGISTRO DE COMPRA',
-  'ACEPTAR REGISTRO DE RECEPCION', 'CERRAR REGISTRO DE COMPRA'];
-
 // Nombre de la estación según el mapeo LP → plantilla de Ajustes; '' si el permiso no está mapeado.
 function nombreDeEstacion(perm) {
   const lista = (ET.store && ET.store.get('traspasos.plantillas', [])) || [];
@@ -92,29 +88,22 @@ function nombreDeEstacion(perm) {
   return (fila && String(fila.nombre || '').trim()) || '';
 }
 
-function cuentaDeTipos(filas) {
-  const corte = {
-    NRC: 'NUEVO REGISTRO DE COMPRA', ARC: 'ACEPTAR REGISTRO DE COMPRA',
-    ARR: 'ACEPTAR REGISTRO DE RECEPCION', CRC: 'CERRAR REGISTRO DE COMPRA'
-  };
-  const cuenta = {};
-  LISTA_PORTADA.forEach(l => { cuenta[l] = 0; });
+// Recuento de la portada por SUBTIPO del listado, con el código de registro de cada
+// acuse. Los subtipos salen en el orden en que aparecen y solo los que tienen acuses.
+function gruposPorSubtipo(filas) {
+  const grupos = [], porNombre = new Map();
   for (const r of filas || []) {
     const s = (r && r.sub) || {};
-    // El texto del subtipo no siempre basta (los acuses de venta llegan como "VENTA" y
-    // sin sigla), así que también miramos tipo, operación y el tipo de acuse del listado.
-    const t = nk([s.clave, s.tipo, s.op, s.texto, r && r.it && r.it.tipoAcuse].join(' '));
-    let l = corte[String(s.sigla || '').toUpperCase()];
-    if (!l) {
-      if (/recepcion|recepc/.test(t)) l = 'ACEPTAR REGISTRO DE RECEPCION';
-      else if (/cerr/.test(t)) l = 'CERRAR REGISTRO DE COMPRA';
-      else if (/acept/.test(t)) l = 'ACEPTAR REGISTRO DE COMPRA';
-      else if (/venta/.test(t)) l = 'VENTA';
-      else if (/nuevo|registro|compra/.test(t)) l = 'NUEVO REGISTRO DE COMPRA';
-    }
-    if (l) cuenta[l] += 1;
+    // Igual que la columna Subtipo del administrador; si viene vacío, el tipo de acuse.
+    const label = String(s.texto || (r && r.it && r.it.tipoAcuse) || s.sigla || 'SIN TIPO')
+      .replace(/\s+/g, ' ').trim().toUpperCase();
+    let g = porNombre.get(label);
+    if (!g) { g = { label: label, n: 0, codigos: [] }; porNombre.set(label, g); grupos.push(g); }
+    g.n += 1;
+    const codigo = String((r && r.nor) || '').trim();
+    if (codigo && codigo !== 'SIN_NOR') g.codigos.push(codigo);
   }
-  return cuenta;
+  return grupos;
 }
 
 // Fecha a partes sueltas. La portada recibe el periodo como Date (d1/d2 del análisis),
@@ -337,7 +326,7 @@ function partesFecha(f) {
 
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, cuentaDeTipos, partesFecha, nombreDeEstacion, LISTA_PORTADA };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, partesFecha, nombreDeEstacion };
   }
 
   // ===================== Arranque DOM =====================
@@ -1037,7 +1026,7 @@ function partesFecha(f) {
 
 
     function portada(doc, fuentes, perm, filas) {
-      const p = doc.addPage(PDFLib.PageSizes.A4);
+      let p = doc.addPage(PDFLib.PageSizes.A4);
       const ancho = p.getWidth() - 112;
       const t = (txt, size, bold, x, y) => {
         const font = bold ? fuentes.fb : fuentes.f;
@@ -1064,9 +1053,28 @@ function partesFecha(f) {
       t('SEMANA ' + semanaAno + ' DEL AÑO ' + anioISO, 22, true, 56, y -= 56);
       t('RAZÓN SOCIAL: ' + razon, 22, true, 56, y -= 46);
       t('ACUSES: ' + filas.length, 22, false, 56, y -= 46);
-      const cuenta = cuentaDeTipos(filas);
-      y -= 26;
-      for (const label of LISTA_PORTADA) t('•  ' + label + ' (' + (cuenta[label] || 0) + ')', 18, false, 76, y -= 32);
+      // Recuento por subtipo y, debajo, los códigos de registro de cada uno: la lista
+      // sigue hasta el pie de la página y salta a otra hoja si no cabe.
+      const alto = 28, xCod = 76;
+      const salta = () => { p = doc.addPage(PDFLib.PageSizes.A4); y = 800; };
+      y -= 30;
+      for (const g of gruposPorSubtipo(filas)) {
+        if (y < 80) salta();
+        t('•  ' + g.label + ' (' + g.n + ')', 14, true, 56, y);
+        y -= alto;
+        let linea = '';
+        for (const codigo of g.codigos) {
+          const prueba = linea ? linea + '    ' + codigo : codigo;
+          if (linea && fuentes.f.widthOfTextAtSize(prueba, 14) > ancho - 20) {
+            t(linea, 14, false, xCod, y);
+            y -= alto;
+            if (y < 70) salta();
+            linea = codigo;
+          } else linea = prueba;
+        }
+        if (linea) { t(linea, 14, false, xCod, y); y -= alto; }
+        y -= 6;
+      }
     }
 
     async function imprimir() {
