@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.34
+// @version      1.0.35
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -24,7 +24,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.34'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.35'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -4149,38 +4149,41 @@ function partesFecha(f) {
       if (cancel) { st('Cancelado'); return; }
 
       const ests = estacionesDe(inc);
-      const doc = await PDFLib.PDFDocument.create();
+      const portadas = await PDFLib.PDFDocument.create();
+      const acuses = await PDFLib.PDFDocument.create();
       const A4 = PDFLib.PageSizes.A4;
-      const f = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
-      const fb = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+      const f = await portadas.embedFont(PDFLib.StandardFonts.Helvetica);
+      const fb = await portadas.embedFont(PDFLib.StandardFonts.HelveticaBold);
       let nAcuses = 0, saltados = 0;
 
       for (const { perm, filas: grupo } of ests) {
         st('Uniendo ' + perm + '…');
-        portada(doc, { f, fb }, perm, grupo);
-        anexoCodigos(doc, { f, fb }, perm, grupo);
+        portada(portadas, { f, fb }, perm, grupo);
+        anexoCodigos(portadas, { f, fb }, perm, grupo);
 
+        const paginas = [];
+        let unidos = 0;
         for (const r of grupo) {
           const bytes = pdfCache.get(r.it.idAcuse);
           if (!bytes) { saltados++; continue; }
           try {
             const src = await PDFLib.PDFDocument.load(bytes);
-            const ps = await doc.copyPages(src, src.getPageIndices());
-            ps.forEach(pg => doc.addPage(pg));
-            nAcuses++;
+            paginas.push(...await acuses.copyPages(src, src.getPageIndices()));
+            unidos++;
           } catch (e) { saltados++; r.pdfError = 'PDF ilegible: ' + e.message; }
         }
+        if (!paginas.length) continue;
+        // Hoja en blanco entre permisos para poder separar los acuses al imprimir.
+        if (acuses.getPageCount()) acuses.addPage(A4);
+        paginas.forEach(pg => acuses.addPage(pg));
+        nAcuses += unidos;
       }
       if (!nAcuses) { st('Ningún PDF se pudo unir'); return; }
 
-      const bytes = await doc.save();
-      const blob = new Blob([bytes], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const win = window.open(url, '_blank');
-      if (!win) descargar(blob, 'acuses_' + rangoTag() + '.pdf');
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-      st('Imprimir: ' + nAcuses + ' acuses · ' + doc.getPageCount() + ' páginas' +
-        (saltados ? ' · ' + saltados + ' sin PDF' : '') + (win ? ' · abierto' : ' · descargado'));
+      descargar(new Blob([await portadas.save()], { type: 'application/pdf' }), 'portadas_' + rangoTag() + '.pdf');
+      descargar(new Blob([await acuses.save()], { type: 'application/pdf' }), 'acuses_' + rangoTag() + '.pdf');
+      st('Imprimir: ' + nAcuses + ' acuses · ' + portadas.getPageCount() + ' páginas de portadas · ' +
+        acuses.getPageCount() + ' páginas de acuses' + (saltados ? ' · ' + saltados + ' sin PDF' : ''));
       } finally { descargando = false; }
     }
 
