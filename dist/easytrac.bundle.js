@@ -7,7 +7,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.33'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.34'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -4080,27 +4080,44 @@ function partesFecha(f) {
       t('SEMANA ' + semanaAno + ' DEL AÑO ' + anioISO, 22, true, 56, y -= 56);
       t('RAZÓN SOCIAL: ' + razon, 22, true, 56, y -= 46);
       t('ACUSES: ' + filas.length, 22, false, 56, y -= 46);
-      // Recuento por subtipo y, debajo, los códigos de registro de cada uno: la lista
-      // sigue hasta el pie de la página y salta a otra hoja si no cabe.
-      const alto = 28, altoCod = 18, xCod = 76;
-      const salta = () => { p = doc.addPage(PDFLib.PageSizes.A4); y = 800; };
+      // Contabilidad general por SUBTIPO; los códigos de registro van en la hoja anexa.
       y -= 30;
+      for (const g of gruposPorSubtipo(filas)) t('•  ' + g.label + ' (' + g.n + ')', 14, true, 56, y -= 28);
+    }
+
+    // Hoja anexa a la portada: los códigos de registro de cada subtipo, en 10 pt.
+    function anexoCodigos(doc, fuentes, perm, filas) {
+      let p = doc.addPage(PDFLib.PageSizes.A4);
+      const ancho = p.getWidth() - 112;
+      const t = (txt, size, bold, x, yy) => {
+        const font = bold ? fuentes.fb : fuentes.f;
+        let s = size;
+        const w = font.widthOfTextAtSize(txt, s);
+        if (w > ancho) { s = Math.floor(size * ancho / w); }
+        const px = x === 'center' ? (p.getWidth() - font.widthOfTextAtSize(txt, s)) / 2 : x;
+        p.drawText(txt, { x: px, y: yy, size: s, font: font });
+      };
+      const salta = () => { p = doc.addPage(PDFLib.PageSizes.A4); y = 800; };
+      let y = 790;
+      t('CÓDIGOS DE REGISTRO', 16, true, 56, y);
+      t(perm === 'SIN_PERMISO' ? 'SIN PERMISO' : perm, 12, false, 56, y -= 26);
+      y -= 34;
       for (const g of gruposPorSubtipo(filas)) {
-        if (y < 80) salta();
-        t('•  ' + g.label + ' (' + g.n + ')', 14, true, 56, y);
-        y -= alto;
+        if (y < 70) salta();
+        t('•  ' + g.label + ' (' + g.n + ')', 12, true, 56, y);
+        y -= 18;
         let linea = '';
         for (const codigo of g.codigos) {
           const prueba = linea ? linea + '    ' + codigo : codigo;
-          if (linea && fuentes.f.widthOfTextAtSize(prueba, 10) > ancho - 20) {
-            t(linea, 10, false, xCod, y);
-            y -= altoCod;
+          if (linea && fuentes.f.widthOfTextAtSize(prueba, 10) > ancho - 22) {
+            t(linea, 10, false, 76, y);
+            y -= 16;
             if (y < 70) salta();
             linea = codigo;
           } else linea = prueba;
         }
-        if (linea) { t(linea, 10, false, xCod, y); y -= altoCod; }
-        y -= 6;
+        if (linea) { t(linea, 10, false, 76, y); y -= 16; }
+        y -= 10;
       }
     }
 
@@ -4124,6 +4141,7 @@ function partesFecha(f) {
       for (const { perm, filas: grupo } of ests) {
         st('Uniendo ' + perm + '…');
         portada(doc, { f, fb }, perm, grupo);
+        anexoCodigos(doc, { f, fb }, perm, grupo);
 
         for (const r of grupo) {
           const bytes = pdfCache.get(r.it.idAcuse);
@@ -4159,7 +4177,10 @@ function partesFecha(f) {
         const doc = await PDFLib.PDFDocument.create();
         const f = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
         const fb = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
-        for (const { perm, filas: grupo } of ests) portada(doc, { f, fb }, perm, grupo);
+        for (const { perm, filas: grupo } of ests) {
+          portada(doc, { f, fb }, perm, grupo);
+          anexoCodigos(doc, { f, fb }, perm, grupo);
+        }
         descargar(new Blob([await doc.save()], { type: 'application/pdf' }), 'portadas_' + rangoTag() + '.pdf');
         st('Portadas: ' + ests.length + ' estación(es) · ' + doc.getPageCount() + ' páginas');
       } catch (e) { st('Error: ' + e.message); }
