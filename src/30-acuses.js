@@ -81,15 +81,15 @@
 const LISTA_PORTADA = ['VENTA', 'NUEVO REGISTRO DE COMPRA', 'ACEPTAR REGISTRO DE COMPRA',
   'ACEPTAR REGISTRO DE RECEPCION', 'CERRAR REGISTRO DE COMPRA'];
 
-// Semana del mes contando semanas de lunes a domingo: la semana que contiene el día 1 es la 1.
-function semanaDelMes(d) {
-  const f = d instanceof Date ? d : new Date(d);
-  if (isNaN(f)) return 0;
-  const lunes = new Date(f.getFullYear(), f.getMonth(), f.getDate());
-  lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
-  const uno = new Date(f.getFullYear(), f.getMonth(), 1);
-  uno.setDate(uno.getDate() - ((uno.getDay() + 6) % 7));
-  return Math.round((lunes - uno) / 604800000) + 1;
+// Nombre de la estación según el mapeo LP → plantilla de Ajustes; '' si el permiso no está mapeado.
+function nombreDeEstacion(perm) {
+  const lista = (ET.store && ET.store.get('traspasos.plantillas', [])) || [];
+  const canon = s => (ET.traspasos && ET.traspasos.canonicalPermit
+    ? ET.traspasos.canonicalPermit(s)
+    : String(s == null ? '' : s).replace(/\s+/g, '').toUpperCase());
+  const code = canon(perm);
+  const fila = (lista || []).find(e => e && canon(e.permiso) === code);
+  return (fila && String(fila.nombre || '').trim()) || '';
 }
 
 function cuentaDeTipos(filas) {
@@ -337,7 +337,7 @@ function partesFecha(f) {
 
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, semanaDelMes, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, cuentaDeTipos, partesFecha, LISTA_PORTADA };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, cuentaDeTipos, partesFecha, nombreDeEstacion, LISTA_PORTADA };
   }
 
   // ===================== Arranque DOM =====================
@@ -1052,16 +1052,15 @@ function partesFecha(f) {
       const f1 = partesFecha(periodo ? periodo.d1 : filas[0].fOp);
       const f2 = partesFecha(periodo ? periodo.d2 : filas[filas.length - 1].fOp);
       const razon = (filas.map(r => (r.p && r.p.razon) || r.razon || '').find(Boolean) || 'SIN_DATO');
+      const estacion = nombreDeEstacion(perm) || razon;
       const mes = MESES3[f1.m - 1] || '';
-      const semanaMes = f1.d ? semanaDelMes(new Date(f1.a || 2000, (f1.m || 1) - 1, f1.d || 1)) : 0;
       const iso = semanaISO(new Date(f1.a || 2000, (f1.m || 1) - 1, f1.d || 1));
       const semanaAno = Number(iso.split('-W')[1]);
       const anioISO = iso.split('-W')[0];
       let y = 760;
       t(perm === 'SIN_PERMISO' ? 'SIN PERMISO' : perm, 36, true, 'center', y);
-      t(razon, 36, true, 'center', y -= 50);
+      t(estacion, 36, true, 'center', y -= 50);
       t('PERIODO ' + String(f1.d).padStart(2, '0') + ' ' + mes + ' – ' + String(f2.d).padStart(2, '0') + ' ' + (MESES3[f2.m - 1] || ''), 26, false, 56, y -= 66);
-      t('SEMANA ' + semanaMes + ' DEL MES ' + mes + ' DEL AÑO ' + (f1.a || ''), 22, true, 56, y -= 46);
       t('SEMANA ' + semanaAno + ' DEL AÑO ' + anioISO, 22, true, 56, y -= 56);
       t('RAZÓN SOCIAL: ' + razon, 22, true, 56, y -= 46);
       t('ACUSES: ' + filas.length, 22, false, 56, y -= 46);

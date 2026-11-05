@@ -3485,6 +3485,8 @@
   }
 
   ET.traspasos = ET.traspasos || {};
+  /* Acuses necesita el mismo criterio de código LP para leer el mapeo LP → estación. */
+  ET.traspasos.canonicalPermit = canonicalPermit;
   /* Única puerta a CONFIG.sendDelayMs para la pestaña Ajustes. */
   ET.traspasos.sendDelay = function (v) {
     if (v === undefined) return CONFIG.sendDelayMs;

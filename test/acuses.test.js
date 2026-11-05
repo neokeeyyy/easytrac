@@ -195,9 +195,22 @@ test('partesFecha acepta el Date del periodo y el texto DD/MM/AAAA', function ()
   assert.deepEqual(api.partesFecha(null), { d: 0, m: 0, a: 0 });
 });
 
-test('semanaDelMes numera las semanas de lunes a domingo', function () {
-  assert.equal(api.semanaDelMes(new Date(2026, 9, 12)), 3);   // oct 2026 empieza jueves
-  assert.equal(api.semanaDelMes(new Date(2026, 9, 18)), 3);
-  assert.equal(api.semanaDelMes(new Date(2026, 9, 1)), 1);
-  assert.equal(api.semanaDelMes(new Date(2026, 9, 31)), 5);
+test('nombreDeEstacion sale del mapeo LP y no de la razon social', function () {
+  const ET = globalThis.EasyTrac;
+  const antesStore = ET.store, antesTr = ET.traspasos;
+  const LP = s => String(s == null ? '' : s).replace(/\s+/g, '').toUpperCase();
+  ET.store = { get: (k, d) => (k === 'traspasos.plantillas'
+    ? [{ nombre: 'OJUELOS-LAGOS', permiso: 'LP/17718/EXP/ES/2016' },
+       { nombre: 'EL GALLO', permiso: 'LP/16385/EXP/ES/2016' }]
+    : d) };
+  ET.traspasos = { canonicalPermit: LP };
+  try {
+    assert.equal(api.nombreDeEstacion('LP/17718/EXP/ES/2016'), 'OJUELOS-LAGOS');
+    assert.equal(api.nombreDeEstacion(' lp / 16385 / exp / es / 2016 '), 'EL GALLO');
+    assert.equal(api.nombreDeEstacion('LP/14432/DIST/PLA/2016'), '');
+    assert.equal(api.nombreDeEstacion(''), '');
+  } finally {
+    ET.store = antesStore;
+    ET.traspasos = antesTr;
+  }
 });
