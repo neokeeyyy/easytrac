@@ -29,11 +29,12 @@
     return m ? m[1] : '';
   }
 
-  /* GitHub raw cachea el archivo 5 minutos. El fetch de revisar() va con no-store, pero
-     la pestaña de instalación sí reutilizaría la copia del navegador y Violentmonkey
-     ofrecería «Reinstalar» con la versión vieja. El ?v= fuerza una descarga nueva. */
+  /* La copia de la rama en GitHub raw tarda unos minutos en refrescarse y entonces
+     Violentmonkey ofrece «Reinstalar» la versión vieja. El archivo de un tag es
+     inmutable, así que la instalación apunta al tag de la versión detectada. */
   function instalarUrl(v) {
-    return FUENTE + '?v=' + encodeURIComponent(v || Date.now());
+    return 'https://raw.githubusercontent.com/neokeeyyy/easytrac/v' +
+      encodeURIComponent(v) + '/EasyTrac.user.js';
   }
 
   var CSS = [
