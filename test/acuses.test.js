@@ -213,3 +213,54 @@ test('avance calcula el porcentaje y marca indeterminado sin total', function ()
   assert.deepEqual(api.avance(20, 20), { pct: 100, indet: false });
   assert.deepEqual(api.avance(30, 20), { pct: 100, indet: false });
 });
+
+test('q prefija apóstrofo a los valores que Excel tomaría como fórmula', function () {
+  assert.equal(api.q('=1+1'), '"\'=1+1"');
+  assert.equal(api.q('+34'), '"\'+34"');
+  assert.equal(api.q('-10'), '"\'-10"');
+  assert.equal(api.q('@suma'), '"\'@suma"');
+  assert.equal(api.q('\t1'), '"\'\t1"');
+  assert.equal(api.q('normal'), '"normal"');
+  assert.equal(api.q('di "hola"'), '"di ""hola"""');
+  assert.equal(api.q(null), '""');
+});
+
+test('permisoEnPantalla lee el encabezado y acepta el formato corto LP/16385', function () {
+  const doc = {
+    querySelector: sel => sel === '#codigoregistro' ? { value: 'LP/16385/EXP/ES/2016' } : null,
+    querySelectorAll: () => []
+  };
+  assert.equal(api.permisoEnPantalla(new Set(['LP/16385']), doc), 'LP/16385');
+});
+
+test('permisoEnPantalla no toma el primer LP de una tabla', function () {
+  const doc = {
+    querySelector: sel => sel === '#example' ? {} : null,   // tabla con LP/14432, que no debe leerse
+    querySelectorAll: () => [
+      { textContent: 'MIGUEL ANGEL OBREGON RIVERA' },
+      { textContent: 'LP/20517/EXP/ES/2017' }
+    ]
+  };
+  assert.equal(api.permisoEnPantalla(['LP/14432/DIST/PLA/2016', 'LP/20517/EXP/ES/2017'], doc), 'LP/20517/EXP/ES/2017');
+  assert.equal(api.permisoEnPantalla(['LP/14432/DIST/PLA/2016'], doc), null);
+});
+
+test('permisoEnPantalla acepta un número de permiso de 4 a 6 dígitos', function () {
+  const doc = { querySelector: () => ({ value: '16385' }), querySelectorAll: () => [] };
+  assert.equal(api.permisoEnPantalla(['LP/16385/EXP/ES/2016'], doc), 'LP/16385/EXP/ES/2016');
+  assert.equal(api.permisoEnPantalla(['LP/14432/DIST/PLA/2016'], doc), null);
+});
+
+test('el prefetch se corta en el tope y pdfCache se poda al pasarse', function () {
+  const lista = Array.from({ length: 200 }, (_, i) => ({ it: { idAcuse: i + 1 } }));
+  assert.equal(api.TOPE_PDF, 120);
+  assert.equal(api.pendientesPrefetch(lista, new Map(), api.TOPE_PDF).length, 120);
+  const cache = new Map([[1, new Uint8Array([1])]]);
+  assert.equal(api.pendientesPrefetch(lista, cache, api.TOPE_PDF)[0].it.idAcuse, 2);
+
+  const podada = new Map();
+  for (let i = 0; i < 130; i++) api.guardarCache(podada, i, 'x', 120);
+  assert.equal(podada.size, 120);
+  assert.equal(podada.has(0), false);
+  assert.equal(podada.has(129), true);
+});

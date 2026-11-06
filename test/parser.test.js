@@ -199,6 +199,19 @@ test('parseMatrix ignora filas antes del bloque TRASPASOS y la fila Total', func
   assert.equal(parsed.rows.some(function (row) { return row.station === 'AUTOCONSUMOS'; }), false);
 });
 
+test('parseMatrix rechaza dos bloques ENTRADA POR TRASPASO en vez de mezclar sus fechas', function () {
+  const text = [
+    'ENTRADA POR TRASPASO\t26/10/2026\t27/10/2026',
+    'PLANTA A\t100\t200',
+    'ENTRADA POR TRASPASO\t28/10/2026\t29/10/2026',
+    'PLANTA B\t300\t400',
+  ].join('\n');
+
+  assert.throws(function () {
+    api.parseMatrix(text, { weekStart: '2026-10-26' });
+  }, /más de un bloque/);
+});
+
 test('assignByOrder asigna permisos ES libres en orden y respeta los ya asignados', function () {
   const permits = [
     { id: '1', permit: 'LP/14432/DIST/PLA/2016' },
@@ -231,9 +244,11 @@ test('assignByOrder asigna permisos ES libres en orden y respeta los ya asignado
   assert.equal(entries[6].destinationId, '8');
 });
 
-test('parseVolume conserva 0.750 como decimal y 1.234 como miles', function () {
+test('parseVolume trata el punto como decimal y conserva la coma de miles', function () {
   assert.equal(api.parseVolume('0.750'), 0.75);
-  assert.equal(api.parseVolume('1.234'), 1234);
+  assert.equal(api.parseVolume('12.345'), 12.345);
+  assert.equal(api.parseVolume('1.250'), 1.25);
+  assert.equal(api.parseVolume('1,250'), 1250);
 });
 
 test('evaluateRows bloquea un traspaso al mismo permiso', function () {

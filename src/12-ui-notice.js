@@ -144,13 +144,22 @@
   if (typeof document !== 'undefined' && typeof fetch === 'function') {
     ET.ready(function () {
       setTimeout(revisar, 4000);
-      if (ET.config && ET.config.accion) {
-        ET.config.accion({
-          seccion: 'Aplicación',
-          etiqueta: 'Buscar actualizaciones',
-          alPulsar: function () { revisar(true); },
-        });
-      }
+      /* 14-ui-config carga después de este módulo: registra la acción en el siguiente tick. */
+      setTimeout(function () {
+        if (ET.config && ET.config.accion) {
+          ET.config.accion({
+            seccion: 'Aplicación',
+            etiqueta: 'Buscar actualizaciones',
+            alPulsar: function () { revisar(true); },
+          });
+        }
+      }, 0);
+    });
+  }
+
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('easytrac:store-error', function () {
+      avisar('No se pudo guardar: el almacenamiento del navegador está lleno o bloqueado.');
     });
   }
 })();

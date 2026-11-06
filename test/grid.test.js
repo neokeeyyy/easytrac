@@ -26,6 +26,36 @@ test('detecta numeros para alinear a la derecha', () => {
   ['A001', '', 'Total', '1 234', 'n/a'].forEach((v) => assert.ok(!grid.esNumero(v), v));
 });
 
+const { JSDOM } = require('jsdom');
+
+test('gridEditar dispara un input que burbujea', () => {
+  const dom = new JSDOM('<table><tbody><tr><td data-r="0" data-c="0"></td></tr></tbody></table>');
+  const doc = dom.window.document;
+  const documentPrevio = globalThis.document;
+  const eventPrevio = globalThis.Event;
+  globalThis.document = doc;
+  globalThis.Event = dom.window.Event;
+  try {
+    const celda = doc.querySelector('td');
+    let disparado = null;
+    doc.querySelector('table').addEventListener('input', (e) => {
+      disparado = e;
+    });
+
+    globalThis.EasyTrac.grid.editar(celda, '12.5');
+
+    assert.equal(celda.textContent, '12.5');
+    assert.ok(disparado, 'input no se disparó');
+    assert.equal(disparado.bubbles, true);
+    assert.equal(disparado.target, celda);
+  } finally {
+    if (documentPrevio === undefined) delete globalThis.document;
+    else globalThis.document = documentPrevio;
+    if (eventPrevio === undefined) delete globalThis.Event;
+    else globalThis.Event = eventPrevio;
+  }
+});
+
 test('la matriz del tope de filas sobrevive la serializacion', () => {
   const filas = Array.from({ length: 40 }, (_, i) => [`E${i}`, String(i)]);
   const tsv = filas.map((f) => f.join('\t')).join('\n');

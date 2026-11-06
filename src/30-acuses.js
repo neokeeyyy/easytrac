@@ -120,7 +120,11 @@ function partesFecha(f) {
   const safe = x => String(x).replace(/[\\/:*?"<>|]+/g, '_').trim();
   const seg = x => safe(x).replace(/\s+/g, ' ').replace(/[. ]+$/, '').slice(0, 90) || 'SIN_DATO';
   const esc = x => String(x == null ? '' : x).replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
-  const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  // Prefija ' a los valores que Excel interpretaría como fórmula (=, +, -, @, tab o CR).
+  const q = v => {
+    const s = String(v == null ? '' : v);
+    return '"' + (/^[=+\-@\t\r]/.test(s) ? "'" + s : s).replace(/"/g, '""') + '"';
+  };
 
   // Fechas de la cadena original: solo claves que contengan "fecha".
   function fechasCadena(o) {
@@ -331,9 +335,41 @@ function partesFecha(f) {
     }));
   }
 
+  // El prefetch no baja todo el rango: tope fijo y poda de pdfCache al pasarse.
+  const TOPE_PDF = 120;
+  function pendientesPrefetch(lista, cache, tope) {
+    return lista.filter(r => !r.error && r.it && r.it.idAcuse && !cache.has(r.it.idAcuse)).slice(0, tope);
+  }
+  function guardarCache(cache, id, b, tope) {
+    cache.set(id, b);
+    while (cache.size > tope) cache.delete(cache.keys().next().value);   // Map conserva el orden de alta
+    return b;
+  }
+
+  // Permiso activo de SIRETRAC: #codigoregistro y el span del navbar; nunca una tabla.
+  function clavePermiso(t) {
+    const m = String(t == null ? '' : t).match(/LP\/0*(\d+)\b/i);
+    if (m) return m[1];
+    const n = String(t == null ? '' : t).trim();
+    return /^\d{4,6}$/.test(n) ? String(+n) : '';
+  }
+  function permisoEnPantalla(codigos, doc) {
+    doc = doc || (typeof document === 'undefined' ? null : document);
+    if (!doc) return null;
+    const textos = [];
+    const oculto = doc.querySelector('#codigoregistro');
+    if (oculto) textos.push(oculto.value);
+    if (doc.querySelectorAll) doc.querySelectorAll('.navbar-custom-menu .hidden-xss').forEach(el => textos.push(el.textContent));
+    const txt = textos.map(t => String(t == null ? '' : t).trim()).find(clavePermiso);
+    const clave = clavePermiso(txt);
+    if (!clave) return null;
+    for (const c of codigos) if (clavePermiso(c) === clave) return String(c);
+    return null;
+  }
+
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, partesFecha, nombreDeEstacion, avance };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla };
   }
 
   // ===================== Arranque DOM =====================
@@ -365,6 +401,15 @@ function partesFecha(f) {
       const barra = $('#sa-prog'); if (barra) barra.hidden = true;
       const el = $('#sa-st'); if (el) el.textContent = t;
     };
+
+    const caido = () => !!(ET && ET.core && ET.core.http && ET.core.http.caida && ET.core.http.caida());
+    const MSG_CAIDA = 'SIRETRAC no responde: se detuvo el trabajo para no saturarlo.';
+    function pintarAvisos() {
+      const el = $('#sa-avisos'); if (!el) return;
+      el.innerHTML = AVISOS.map(t => '<div>' + esc(t) + '</div>').join('');
+      el.hidden = !AVISOS.length;
+    }
+    const aviso = t => { AVISOS.push(t); pintarAvisos(); };
 
     // Barra de cada paso; sustituye al texto mientras dura el escaneo.
     const progreso = (txt, hechos, total) => {
@@ -404,7 +449,7 @@ function partesFecha(f) {
       let i = 0;
       const W = Math.max(1, Math.min(n, items.length));
       await Promise.all(Array.from({ length: W }, async () => {
-        while (i < items.length && !cancel) { const k = i++; await fn(items[k], k); }
+        while (i < items.length && !cancel && !caido()) { const k = i++; await fn(items[k], k); }
       }));
     }
 
@@ -459,11 +504,6 @@ function partesFecha(f) {
 
     const firma = r => ((r && r.item2) || []).map(i => i.idAcuse).join(',') + '|' + ((r && r.item1 && r.item1.paginaFinal) || 1);
 
-    function permisoEnPantalla(codigos) {
-      const m = String((document.body.innerText || '')).match(/LP\/\d+\/[A-Z]+\/[A-Za-z]+\/\d{4}/);
-      return m && codigos.has(m[0]) ? m[0] : null;
-    }
-
     // 3-4 peticiones. Devuelve cómo recorrer y RESTAURA SIEMPRE el permiso original.
     async function detectaEstrategia(permisos, prog) {
       const codigos = new Set(permisos.map(p => p.codigo));
@@ -496,9 +536,9 @@ function partesFecha(f) {
       // Restauración SIEMPRE, también en global y param (la detección movió la sesión).
       if (activo) {
         try { prog('Restaurando el permiso original…'); await activaPermiso(activo); }
-        catch (e) { if (!abortado(e)) AVISOS.push('no se pudo restaurar el permiso: ' + e.message); }
+        catch (e) { if (!abortado(e)) aviso('no se pudo restaurar el permiso: ' + e.message); }
       } else {
-        AVISOS.push('no se pudo saber qué permiso tenías activo: puede quedar otro permiso seleccionado');
+        aviso('no se pudo saber qué permiso tenías activo: puede quedar otro permiso seleccionado');
       }
       return { modo, activo, fBase, paginas };
     }
@@ -604,10 +644,12 @@ function partesFecha(f) {
       if (pdfCache.has(id)) return Promise.resolve(pdfCache.get(id));
       if (pdfProm.has(id)) return pdfProm.get(id);
       const p = (async () => {
+        // Durante una descarga no se poda: el ZIP necesita todos los PDFs elegidos.
+        const tope = descargando ? Infinity : TOPE_PDF;
         const guardado = await leerDisco(id);
-        if (guardado) { pdfCache.set(id, guardado); return guardado; }
+        if (guardado) { guardarCache(pdfCache, id, guardado, tope); return guardado; }
         const b = await bajarPdf(it);
-        pdfCache.set(id, b);
+        guardarCache(pdfCache, id, b, tope);
         guardarDisco(id, b);
         return b;
       })();
@@ -621,7 +663,7 @@ function partesFecha(f) {
     let prefetchToken = 0;
     function prefetch(lista) {
       const token = ++prefetchToken;
-      const pend = lista.filter(r => !r.error && r.it && r.it.idAcuse && !pdfCache.has(r.it.idAcuse));
+      const pend = pendientesPrefetch(lista, pdfCache, TOPE_PDF);
       if (!pend.length) return;
       pool(pend, 3, async r => {
         if (token !== prefetchToken) return;
@@ -728,7 +770,7 @@ function partesFecha(f) {
       if (d1 > d2) { st('El rango está al revés'); return; }
       analizando = true; cancel = false; ctrl = new AbortController();
       periodo = { d1, d2 };
-      filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0;
+      filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0; pintarAvisos();
       render(); progreso('Analizando', 0, 0);
       try { await barrido(d1, d2); }
       catch (e) { if (!abortado(e)) st('Error: ' + e.message); }
@@ -739,8 +781,8 @@ function partesFecha(f) {
       progreso('Leyendo los permisos', 0, 0);
       let permisos = [];
       try { permisos = ordenPermisos(await listaPermisos()); }
-      catch (e) { if (!abortado(e)) AVISOS.push('no se pudieron leer los permisos: ' + e.message); }
-      if (!permisos.length) AVISOS.push('no se pudieron leer los permisos: se barrió solo el permiso activo');
+      catch (e) { if (!abortado(e)) aviso('no se pudieron leer los permisos: ' + e.message); }
+      if (!permisos.length) aviso('no se pudieron leer los permisos: se barrió solo el permiso activo');
 
       const desde = new Date(d1); desde.setDate(desde.getDate() - 7);   // margen de 7 días
       const hasta = new Date(d2); hasta.setDate(hasta.getDate() + 7);   // margen simétrico: la fecha de operación puede diferir de la de acuse
@@ -764,7 +806,7 @@ function partesFecha(f) {
             for (let j = 0; j < res.length; j++) {
               const r = res[j], n = nums[j];
               if (r.error) {
-                if (!abortado(r.error)) AVISOS.push(etiqueta + ' · página ' + n + ': ' + r.error.message);
+                if (!abortado(r.error)) aviso(etiqueta + ' · página ' + n + ': ' + r.error.message);
                 return;
               }
               fin = Math.max(fin, (r.item1 && r.item1.paginaFinal) || 1);
@@ -799,7 +841,7 @@ function partesFecha(f) {
             det = await detectaEstrategia(permisos, t => progreso(t, 0, 0));
           } catch (e) {
             if (abortado(e)) return;
-            AVISOS.push('no se pudo detectar cómo se recorre el listado: ' + e.message);
+            aviso('no se pudo detectar cómo se recorre el listado: ' + e.message);
             det = { modo: 'sesion', activo: null };
           }
           if (cancel) return;
@@ -1014,11 +1056,17 @@ function partesFecha(f) {
       let hechos = 0;
       st('PDFs 0/' + inc.length + '…');
       await pool(inc, WORKERS, async r => {
+        if (caido()) return;
         try { await pdfDe(r.it); }
         catch (e) { if (!abortado(e)) r.pdfError = e.message; }
         hechos++;
         if (hechos % 5 === 0 || hechos === inc.length) st('PDFs ' + hechos + '/' + inc.length + '…');
       });
+      if (caido() && !cancel) {
+        aviso(MSG_CAIDA);
+        st(MSG_CAIDA);
+        const e = new Error(MSG_CAIDA); e.caida = true; throw e;
+      }
     }
 
     async function descargarZip() {
@@ -1232,7 +1280,7 @@ function partesFecha(f) {
       cancel = true;
       try { ctrl.abort(); } catch (e) { /* ya abortado */ }
       ctrl = new AbortController();
-      filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0;
+      filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0; pintarAvisos();
       periodo = null;
       pdfCache.clear(); pdfProm.clear();
       prefetchToken++;
@@ -1272,6 +1320,8 @@ function partesFecha(f) {
       #sa-panel .sa-i.sa-dup{color:#706F6F}
       #sa-panel .sa-i.sa-err{color:#C60C0E}
       #sa-panel .sa-i[hidden]{display:none}
+      #sa-panel .sa-avisos{font-size:10px;line-height:1.35;color:#C60C0E;margin-top:3px;max-height:72px;overflow:auto}
+      #sa-panel .sa-avisos[hidden]{display:none}
       #sa-panel .sa-st{font-size:10px;line-height:1.3;color:#706F6F;min-height:13px;margin-top:3px;word-break:break-word}
       #sa-panel .sa-prog{margin-top:3px}
       #sa-panel .sa-prog[hidden]{display:none}
@@ -1327,6 +1377,7 @@ function partesFecha(f) {
         <div id="sa-prog-txt" class="sa-plabel"></div>
         <div class="sa-track"><i id="sa-prog-fill" class="sa-fill"></i></div>
       </div>
+      <div id="sa-avisos" class="sa-avisos" role="status" hidden></div>
       <div id="sa-st" class="sa-st" role="status"></div>`;
     ET.ui.tab('acuses', 'Acuses', 30, 300).appendChild(panel);
 

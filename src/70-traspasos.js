@@ -194,11 +194,6 @@
       } else {
         text = text.replace(',', '.');
       }
-    } else if (lastDot !== -1) {
-      // 0.750 es un decimal; 1.234 se mantiene como separador de miles.
-      if (!/^0\.\d{3}$/.test(text) && /^\d{1,3}(?:\.\d{3})+$/.test(text)) {
-        text = text.replace(/\./g, '');
-      }
     }
 
     const number = Number(text);
@@ -321,6 +316,7 @@
   // Formato de la plantilla real: una fila "ENTRADA POR TRASPASO" y fechas largas en el encabezado.
   function parseTransferSheet(table, headers, delimiter, weekStart) {
     let transferRow = null;
+    let transferBlocks = 0;
     let branch = '';
     let permit = '';
 
@@ -330,12 +326,21 @@
       });
       if (firstIndex === -1) continue;
       const first = normalizeText(cells[firstIndex]);
-      if (first.startsWith('entrada por traspaso')) transferRow = cells;
+      if (first.startsWith('entrada por traspaso')) {
+        transferBlocks += 1;
+        transferRow = cells;
+      }
       if (first.startsWith('sucursal')) branch = String(cells[firstIndex + 1] || '').trim();
       if (/^n[°º]?\s*de\s*permiso/.test(first)) {
         const found = cells.join(' ').match(/(?:CNE\/)?LP\/\d+\/[A-Z]+\/[A-Z]+\/\d+/i);
         if (found) permit = found[0].toUpperCase();
       }
+    }
+    /* Dos bloques comparten una sola fila de fechas: unirlos inventaría datos. */
+    if (transferBlocks > 1) {
+      throw new Error(
+        'La hoja tiene más de un bloque "ENTRADA POR TRASPASO". Pega un solo bloque por matriz.'
+      );
     }
     if (!transferRow) return null;
 
@@ -1477,7 +1482,17 @@
     }
     if (!ui.weekStart.value) ui.weekStart.value = previousMondayISO();
 
-    const parsed = parseMatrix(text, { weekStart: ui.weekStart.value });
+    let parsed;
+    try {
+      parsed = parseMatrix(text, { weekStart: ui.weekStart.value });
+    } catch (error) {
+      state.parsed = null;
+      state.preview = [];
+      ui.stations.value = '';
+      ui.preview.textContent = '';
+      ui.matrixStatus.textContent = error.message;
+      return null;
+    }
     state.parsed = parsed;
 
     const stations = uniqueStations(parsed);
@@ -2216,7 +2231,6 @@
             ' clave(s) para deduplicar.'
         );
 
-        const batchKeys = new Set();
         for (const transfer of group.transfers) {
           const key = normalizeKey(
             transfer.destinationPermit,
@@ -2224,22 +2238,19 @@
             transfer.volumeKg,
             transfer.sourcePermit
           );
-          if (batchKeys.has(key)) {
-            skipped += 1;
-            say('Omitido (duplicado en el lote): ' + transfer.destinationPermit + ' ' + transfer.operationDate + ' ' + formatKg(transfer.volumeKg));
-            continue;
-          }
           if (existing.has(key)) {
             skipped += 1;
             say('Omitido (ya existe): ' + transfer.destinationPermit + ' ' + transfer.operationDate + ' ' + formatKg(transfer.volumeKg));
             continue;
           }
+          if (ET.core && ET.core.http && ET.core.http.caida && ET.core.http.caida()) {
+            say('Operación cancelada: SIRETRAC no responde.');
+            break;
+          }
 
           say('Enviando ' + transfer.destinationPermit + ' ' + transfer.operationDate + ' ' + formatKg(transfer.volumeKg) + '…');
           const text = await postTransfer(transfer);
           const registrationNumber = findRegistrationNumber(text);
-          batchKeys.add(key);
-          existing.add(key);
           state.ledger.push({
             key: key,
             permit: transfer.destinationPermit,
@@ -3516,7 +3527,11 @@
       ],
       defecto: [],
       leer: function () { return loadPlantillas(); },
-      guardar: function (v) { savePlantillas(v); refreshPlantillas(); },
+      guardar: function (v) {
+        savePlantillas(v);
+        refreshPlantillas();
+        invalidateTransfers('Mapeo actualizado; vuelve a generar los traspasos.');
+      },
     });
   }
 })();

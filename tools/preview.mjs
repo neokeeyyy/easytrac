@@ -3,8 +3,10 @@
    All five tabs mount on that route because the page carries jQuery and the ids
    the features look for. Nothing leaves the machine except the jQuery tag. */
 import { existsSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 
 const PORT = Number(process.argv[2] || 8099);
+const ROOT = process.cwd();
 
 const shell = () => `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>SIRETRAC - preview</title>
@@ -38,14 +40,15 @@ table.grid td,table.grid th{border:1px solid var(--ui-border);padding:6px 8px;te
 const types = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html' };
 
 Bun.serve({
+  hostname: '127.0.0.1',
   port: PORT,
   fetch(req) {
     const path = decodeURIComponent(new URL(req.url).pathname);
     if (path === '/' || path.startsWith('/GasLP/') || path.startsWith('/OrdenDePedido/') || path.startsWith('/RegistroVenta')) {
       return new Response(shell(), { headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
-    const file = path.replace(/^\/+/, '');
-    if (existsSync(file) && !file.includes('..')) {
+    const file = resolve(ROOT, path.replace(/^\/+/, ''));
+    if (file.startsWith(ROOT + sep) && existsSync(file)) {
       const ext = file.slice(file.lastIndexOf('.'));
       return new Response(Bun.file(file), { headers: { 'content-type': types[ext] || 'application/octet-stream' } });
     }

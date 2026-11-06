@@ -291,5 +291,80 @@ test('el formato de traspaso no imprime datos de otra empresa', function () {
   camposConfig.find((c) => c.clave === 'acs.emisor_dir').guardar('');
 });
 
+test('cerrarEntrega: un JSON con result=false deja ok=false y el HTML sigue siendo OK', async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({ status: 200, text: async () => '{"result":false}' });
+    const fallido = await acs.cerrarEntrega({ idEntrega: 1, codigo: 'LP/1/2/3', idCompra: 9, base: '/GasLP/Recepcion/PaginaConfirmacion' });
+    assert.equal(fallido.ok, false);
+
+    globalThis.fetch = async () => ({ status: 200, text: async () => '<html>cierre correcto</html>' });
+    const html = await acs.cerrarEntrega({ idEntrega: 1, codigo: 'LP/1/2/3', idCompra: 9, base: '/GasLP/Recepcion/PaginaConfirmacion' });
+    assert.equal(html.ok, true);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('subir omite una compra no cerrada', async () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><table id="acs-tabla"><tbody></tbody></table><p id="acs-status"></p></body></html>');
+  const previo = globalThis.document;
+  globalThis.document = dom.window.document;
+  globalThis.EasyTrac.core.http.config.DELAY_MS = 1;
+  const idx = acs.agregarFacturaCandidata(
+    { idCompra: '9', idEstatus: 1, fechaCierre: '', codigoRegistro: 'LP/1/2/9' }, null, { idCompra: '9' });
+  const chk = dom.window.document.querySelector('.acs-factura-check[data-idx="' + idx + '"]');
+  chk.checked = true;
+
+  await acs.subirFacturasSeleccionadas();
+  assert.match(dom.window.document.getElementById('acs-status').textContent, /compra no cerrada/);
+
+  globalThis.document = previo;
+});
+
+test('una fila con HTML de la API lo deja como texto', () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><table id="acs-tabla"><tbody></tbody></table></body></html>');
+  const previo = globalThis.document;
+  globalThis.document = dom.window.document;
+  const malicioso = '<img src=x onerror=alert(1)>';
+  const tr = acs.filaCompra({
+    idEstatus: 0,
+    codigoRegistro: malicioso,
+    volumen_Solicitado: malicioso,
+    volumen_Entregado: '1',
+    fechaCompra: malicioso,
+    permiso_Vendedor: malicioso
+  }, 0, 'acs-cand-check', { motivo: true });
+
+  assert.equal(tr.children[1].textContent, malicioso);
+  assert.equal(dom.window.document.querySelectorAll('#acs-tabla tbody img').length, 0);
+  assert.ok(tr.querySelector('.acs-motivo[data-idx="0"]'));
+  assert.ok(tr.querySelector('.acs-motivo-msg'));
+
+  globalThis.document = previo;
+});
+
+test('el PDF normaliza el volumen con comas y rechaza el vacio', function () {
+  let textos = [];
+  const doc = new Proxy({}, {
+    get: function (_, k) {
+      if (k === 'text') return function (t) { textos.push(Array.isArray(t) ? t.join('|') : String(t)); };
+      return function () {};
+    }
+  });
+  globalThis.jspdf = { jsPDF: function () { return doc; } };
+
+  acs.generarFormatoTraspaso({ volumen_Entregado: '1,234.5', fechaCompra: '26/10/2026' });
+  assert.ok(textos.some(function (t) { return t.indexOf('2,397') >= 0; }), '1234.5 kg son 2397 litros');
+
+  textos = [];
+  acs.generarFormatoTraspaso({ volumen_Entregado: ' 1,000 ', fechaCompra: '26/10/2026' });
+  assert.ok(textos.some(function (t) { return t.indexOf('1,942') >= 0; }), '1000 kg son 1942 litros');
+
+  assert.throws(function () { acs.generarFormatoTraspaso({ volumen_Entregado: '' }); }, /volumen de entrega vacío/);
+});
+
 
 

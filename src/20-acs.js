@@ -148,7 +148,15 @@
   function secuencia(items, fn) {
     var seq = Promise.resolve();
     items.forEach(function (item, i) {
-      seq = seq.then(function () { return STOP ? undefined : fn(item, i); }).then(espera);
+      seq = seq.then(function () {
+        if (STOP) return undefined;
+        if (ET.core.http.caida && ET.core.http.caida()) {
+          STOP = true;
+          progRender('Operación cancelada: SIRETRAC no responde.');
+          return undefined;
+        }
+        return fn(item, i);
+      }).then(espera);
     });
     return seq;
   }
@@ -304,7 +312,9 @@
     var qs = 'Destino=13&numero=' + opts.idEntrega + '&codigo=' + encodeURIComponent(opts.codigo) + '&idCompra=' + opts.idCompra;
     var url = opts.base + '?' + qs;
     return apiPost(url, '').then(function (res) {
-      return { ok: res.status === 200 && res.text.indexOf('SesionExpirada') === -1, detalle: 'HTTP ' + res.status };
+      var ok = res.status === 200 && res.text.indexOf('SesionExpirada') === -1;
+      if (ok && res.json && res.json.result === false) ok = false;
+      return { ok: ok, detalle: 'HTTP ' + res.status };
     });
   }
 
@@ -371,7 +381,8 @@
 
   /* ============ FORMATO DE TRASPASO ============ */
   function generarFormatoTraspaso(compra) {
-    var kg = parseFloat(compra.volumen_Entregado) || 0;
+    var kg = parseFloat(String(compra.volumen_Entregado == null ? '' : compra.volumen_Entregado).replace(/[,\s]/g, ''));
+    if (!(kg > 0)) throw new Error('volumen de entrega vacío');
     var litros = (kg / 0.515).toFixed(0);
     var fecha = compra.fechaCompra || '';
     var diasSemana = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
@@ -724,7 +735,11 @@
         return r;
       }
       return cerrarEntrega({ idEntrega: r.idEntrega, codigo: r.codigo, idCompra: r.idCompra, base: '/GasLP/Recepcion/PaginaConfirmacion' })
-        .then(function (c) { r.msg = 'cierre: ' + (c.ok ? 'OK' : 'FALLO ' + c.detalle); return r; });
+        .then(function (c) {
+          if (c.ok === false) r.ok = false;
+          r.msg = 'cierre: ' + (c.ok ? 'OK' : 'FALLO ' + c.detalle);
+          return r;
+        });
     });
   }
 
@@ -905,6 +920,10 @@
         progStep('Omitida · sin traspaso pendiente · ' + item.compra.codigoRegistro);
         return;
       }
+      if (clasificarFactura(item.compra, item.referencia) !== 'pendiente') {
+        progStep('Omitida · compra no cerrada · ' + item.compra.codigoRegistro);
+        return;
+      }
       progRender('Subiendo ' + item.compra.codigoRegistro + '...');
       return (item.permisoUrl ? cambiarPermiso({ url: item.permisoUrl }) : Promise.resolve())
         .then(function () { return subirFormatoTraspaso(item.compra); })
@@ -995,17 +1014,50 @@
     var tr = document.createElement('tr');
     tr.tabIndex = 0;
     tr.setAttribute('aria-selected', 'true');
-    tr.innerHTML = '<td><input type="checkbox" checked class="' + clase + '" data-idx="' + idx + '"></td>' +
-      '<td>' + c.codigoRegistro + '</td>' +
-      '<td>' + estatusTxt + '</td>' +
-      '<td>' + (c.volumen_Solicitado || '?') + ' / ' + (c.volumen_Entregado || '?') + '</td>' +
-      '<td>' + (c.fechaCompra || '') + '</td>' +
-      '<td>' + (c.permiso_Vendedor || '') + '</td>' +
-      (opts.motivo ? '<td><input type="text" class="acs-motivo" data-idx="' + idx + '" aria-label="Motivo de cierre" placeholder="Mínimo 5 caracteres"><span class="acs-motivo-msg" role="alert"></span></td>' : '') +
-      (opts.estado ? '<td class="acs-fact-estado">' + opts.estado + '</td>' : '');
+
+    var tdCheck = document.createElement('td');
+    var chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = true;
+    chk.className = clase;
+    chk.setAttribute('data-idx', String(idx));
+    tdCheck.appendChild(chk);
+    tr.appendChild(tdCheck);
+
+    tr.appendChild(celdaTexto(c.codigoRegistro));
+    tr.appendChild(celdaTexto(estatusTxt));
+    tr.appendChild(celdaTexto((c.volumen_Solicitado || '?') + ' / ' + (c.volumen_Entregado || '?')));
+    tr.appendChild(celdaTexto(c.fechaCompra || ''));
+    tr.appendChild(celdaTexto(c.permiso_Vendedor || ''));
+
+    if (opts.motivo) {
+      var tdMotivo = document.createElement('td');
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'acs-motivo';
+      input.setAttribute('data-idx', String(idx));
+      input.setAttribute('aria-label', 'Motivo de cierre');
+      input.placeholder = 'Mínimo 5 caracteres';
+      var msg = document.createElement('span');
+      msg.className = 'acs-motivo-msg';
+      msg.setAttribute('role', 'alert');
+      tdMotivo.appendChild(input);
+      tdMotivo.appendChild(msg);
+      tr.appendChild(tdMotivo);
+    }
+    if (opts.estado) tr.appendChild(celdaTexto(opts.estado, 'acs-fact-estado'));
+
     document.querySelector('#acs-tabla tbody').appendChild(tr);
     actualizarResumen();
     return tr;
+  }
+
+  /* Celda de texto plano: los datos de la API nunca se interpretan como HTML. */
+  function celdaTexto(texto, clase) {
+    var td = document.createElement('td');
+    if (clase) td.className = clase;
+    td.textContent = texto == null ? '' : String(texto);
+    return td;
   }
 
   /* Fila a la que salta el teclado; -1 = tecla no manejada. */
@@ -1433,7 +1485,11 @@
       generarFormatoTraspaso: generarFormatoTraspaso,
       clasificarFactura: clasificarFactura,
       filaDestino: filaDestino,
-      elegirVehiculo: elegirVehiculo
+      elegirVehiculo: elegirVehiculo,
+      cerrarEntrega: cerrarEntrega,
+      subirFacturasSeleccionadas: subirFacturasSeleccionadas,
+      agregarFacturaCandidata: agregarFacturaCandidata,
+      filaCompra: filaCompra
     };
   }
 

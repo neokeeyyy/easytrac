@@ -10,9 +10,18 @@
       return v == null ? def : JSON.parse(v);
     } catch (e) { return def; }
   }
+  var avisado = false;
   function set(k, v) {
     try { localStorage.setItem(P + k, JSON.stringify(v)); return true; }
-    catch (e) { return false; }
+    catch (e) {
+      if (!avisado) {
+        avisado = true;
+        try {
+          window.dispatchEvent(new CustomEvent('easytrac:store-error', { detail: { clave: k } }));
+        } catch (e2) {}
+      }
+      return false;
+    }
   }
   function del(k) {
     try { localStorage.removeItem(P + k); } catch (e) {}

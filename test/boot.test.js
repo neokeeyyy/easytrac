@@ -181,3 +181,18 @@ test('el loader apunta a un módulo por archivo y no pide grants', () => {
   /* Sin esto la copia modular reporta 0.0.0-dev y el aviso de versión miente. */
   expect(head).toContain("EasyTrac.version = '" + VERSION + "'");
 });
+
+test('Ajustes ofrece el botón Buscar actualizaciones', async () => {
+  const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros', '', undefined, (w) => {
+    w.fetch = async () => ({ ok: true, text: async () => '@version 9.9.9' });
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  win.EasyTrac.config.abrir();
+  expect(win.document.body.textContent).toContain('Buscar actualizaciones');
+});
+
+test('un fallo al guardar en el navegador avisa en pantalla', async () => {
+  const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
+  win.dispatchEvent(new win.CustomEvent('easytrac:store-error'));
+  expect(win.document.getElementById('et-upd-aviso').textContent).toContain('No se pudo guardar');
+});

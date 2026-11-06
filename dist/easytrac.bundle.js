@@ -41,9 +41,18 @@
       return v == null ? def : JSON.parse(v);
     } catch (e) { return def; }
   }
+  var avisado = false;
   function set(k, v) {
     try { localStorage.setItem(P + k, JSON.stringify(v)); return true; }
-    catch (e) { return false; }
+    catch (e) {
+      if (!avisado) {
+        avisado = true;
+        try {
+          window.dispatchEvent(new CustomEvent('easytrac:store-error', { detail: { clave: k } }));
+        } catch (e2) {}
+      }
+      return false;
+    }
   }
   function del(k) {
     try { localStorage.removeItem(P + k); } catch (e) {}
@@ -66,6 +75,84 @@
   function cfg() { return ET.core.http.config || {}; }
   function log() { if (ET.core.log) ET.core.log.apply(null, arguments); }
 
+  /* Cortacircuitos: varios 500 seguidos en poco tiempo = SIRETRAC caído o saturado. */
+  var CAIDA = { activa: false, fallos: 0, desde: 0, oyentes: [] };
+  var VENTANA_MS = 60000;
+  var MAX_FALLOS = 3;
+  var MSG_CAIDA = 'SIRETRAC no responde (posible saturación o mantenimiento). Operación cancelada.';
+
+  function caida() { return CAIDA.activa; }
+
+  function alCaer(fn) {
+    if (typeof fn !== 'function') return;
+    if (CAIDA.activa) { try { fn(MSG_CAIDA); } catch (e) {} return; }
+    CAIDA.oyentes.push(fn);
+  }
+
+  function avisarCaida() {
+    if (CAIDA.activa) return;
+    CAIDA.activa = true;
+    log('CAIDA', { fallos: CAIDA.fallos });
+    for (var i = 0; i < CAIDA.oyentes.length; i++) {
+      try { CAIDA.oyentes[i](MSG_CAIDA); } catch (e) {}
+    }
+  }
+
+  function anotar(status) {
+    if (status >= 500) {
+      var ahora = Date.now();
+      if (!CAIDA.fallos || ahora - CAIDA.desde > VENTANA_MS) { CAIDA.fallos = 0; CAIDA.desde = ahora; }
+      CAIDA.fallos += 1;
+      if (CAIDA.fallos >= MAX_FALLOS) avisarCaida();
+    } else if (status > 0) {
+      CAIDA.fallos = 0;
+      CAIDA.desde = 0;
+    }
+  }
+
+  function rechazarCaida() {
+    var e = new Error(MSG_CAIDA);
+    e.caida = true;
+    return Promise.reject(e);
+  }
+
+  function pantallaCaida(mensaje) {
+    if (typeof document === 'undefined') return;
+    function pintar() {
+      if (!document.body || document.getElementById('easytrac-caida')) return;
+      var caja = document.createElement('div');
+      caja.id = 'easytrac-caida';
+      caja.setAttribute('role', 'alertdialog');
+      caja.setAttribute('aria-modal', 'true');
+      caja.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.86);display:flex;align-items:center;justify-content:center;padding:24px;font:400 16px/1.6 var(--ui-font,system-ui),sans-serif;';
+      var carta = document.createElement('div');
+      carta.style.cssText = 'max-width:560px;width:100%;background:var(--ui-bg,#fff);color:var(--ui-fg,#333);border:2px solid var(--ui-danger,#C60C0E);padding:28px;';
+      var titulo = document.createElement('h2');
+      titulo.textContent = 'SIRETRAC no responde';
+      titulo.style.cssText = 'margin:0 0 12px;font-size:20px;color:var(--ui-danger,#C60C0E);';
+      var texto = document.createElement('p');
+      texto.textContent = mensaje;
+      texto.style.margin = '0 0 12px';
+      var ayuda = document.createElement('p');
+      ayuda.textContent = 'Se detuvieron las operaciones en curso. Espera unos minutos y recarga la página. Si sigue igual, avisa a sistemas.';
+      ayuda.style.margin = '0 0 20px';
+      var boton = document.createElement('button');
+      boton.type = 'button';
+      boton.textContent = 'Recargar página';
+      boton.style.cssText = 'background:var(--ui-danger,#C60C0E);color:#fff;border:0;padding:10px 18px;font:inherit;cursor:pointer;';
+      boton.onclick = function () { location.reload(); };
+      carta.appendChild(titulo);
+      carta.appendChild(texto);
+      carta.appendChild(ayuda);
+      carta.appendChild(boton);
+      caja.appendChild(carta);
+      document.body.appendChild(caja);
+      boton.focus();
+    }
+    if (document.body) pintar();
+    else document.addEventListener('DOMContentLoaded', pintar);
+  }
+
   function esperarMs(ms) {
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
   }
@@ -75,12 +162,14 @@
   }
 
   function apiPost(url, body, plain) {
+    if (CAIDA.activa) return rechazarCaida();
     log(plain ? 'POST PLAIN' : 'POST', { url: url, body: body });
     return fetch(url, { method: 'POST', headers: plain ? HDRS_PLAIN : HDRS, body: body, credentials: 'same-origin' })
       .then(function (r) {
         return r.text().then(function (txt) {
           var j = null; try { j = JSON.parse(txt); } catch (e) {}
           var res = { status: r.status, text: txt, json: j };
+          anotar(r.status);
           log('RESPUESTA', { url: url, status: r.status, json: j, text: textoRespuesta(res) });
           return res;
         });
@@ -98,6 +187,7 @@
     var intento = 0;
     var max = Math.max(1, Number(cfg().DATA_RETRIES) || 3);
     function ejecutar() {
+      if (CAIDA.activa) return rechazarCaida();
       intento++;
       return peticion().then(function (res) {
         if (intento < max && reintentar(res)) {
@@ -105,6 +195,7 @@
         }
         return res;
       }).catch(function (e) {
+        if (CAIDA.activa || e.caida) throw e;
         if (intento < max) {
           return esperarMs((Number(cfg().DATA_RETRY_BASE_MS) || 100) * Math.pow(2, intento - 1)).then(ejecutar);
         }
@@ -126,22 +217,30 @@
             var json = null;
             try { json = JSON.parse(txt); } catch (e) {}
             var res = { status: r.status, text: txt, json: json };
+            anotar(r.status);
             log('RESPUESTA GET', { url: url, status: r.status, json: json, text: textoRespuesta(res) });
             return res;
           });
         });
     }, function (res) { return respuestaReintentable(res) || !res.json; })
       .then(function (res) {
+        if (res.status >= 400) throw new Error('HTTP ' + res.status + ' en ' + url);
         if (!res.json) throw new Error('respuesta no JSON en ' + url);
         return res.json;
       });
   }
 
   function datosDe(url) {
-    return apiPostDatos(url, 'idEstatus=-2').then(function (res) { return (res.json && res.json.data) || []; });
+    return apiPostDatos(url, 'idEstatus=-2').then(function (res) {
+      if (!res || res.status >= 400 || !res.json) {
+        throw new Error('SIRETRAC devolvió HTTP ' + (res && res.status) + ' en ' + url);
+      }
+      return res.json.data || [];
+    });
   }
 
   function postMultipart(url, formData) {
+    if (CAIDA.activa) return rechazarCaida();
     return fetch(url, {
       method: 'POST',
       headers: { 'X-Requested-With': 'XMLHttpRequest' },
@@ -151,6 +250,7 @@
       return r.text().then(function (txt) {
         var json = null;
         try { json = JSON.parse(txt); } catch (e) {}
+        anotar(r.status);
         return { status: r.status, text: txt, json: json };
       });
     });
@@ -166,8 +266,13 @@
     apiPostDatos: apiPostDatos,
     getJsonDatos: getJsonDatos,
     datosDe: datosDe,
-    postMultipart: postMultipart
+    postMultipart: postMultipart,
+    caida: caida,
+    alCaer: alCaer,
+    mensajeCaida: MSG_CAIDA
   };
+
+  if (typeof document !== 'undefined') alCaer(pantallaCaida);
 })();
 
 /* ---- src/04-dates.js ---- */
@@ -730,13 +835,22 @@
   if (typeof document !== 'undefined' && typeof fetch === 'function') {
     ET.ready(function () {
       setTimeout(revisar, 4000);
-      if (ET.config && ET.config.accion) {
-        ET.config.accion({
-          seccion: 'Aplicación',
-          etiqueta: 'Buscar actualizaciones',
-          alPulsar: function () { revisar(true); },
-        });
-      }
+      /* 14-ui-config carga después de este módulo: registra la acción en el siguiente tick. */
+      setTimeout(function () {
+        if (ET.config && ET.config.accion) {
+          ET.config.accion({
+            seccion: 'Aplicación',
+            etiqueta: 'Buscar actualizaciones',
+            alPulsar: function () { revisar(true); },
+          });
+        }
+      }, 0);
+    });
+  }
+
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('easytrac:store-error', function () {
+      avisar('No se pudo guardar: el almacenamiento del navegador está lleno o bloqueado.');
     });
   }
 })();
@@ -847,6 +961,7 @@
   function gridEditar(celda, valor) {
     celda.textContent = valor == null ? '' : String(valor);
     celda.className = esNumero(valor) ? 'num' : '';
+    celda.dispatchEvent(new Event('input', { bubbles: true }));
     return celda;
   }
 
@@ -1657,7 +1772,15 @@
   function secuencia(items, fn) {
     var seq = Promise.resolve();
     items.forEach(function (item, i) {
-      seq = seq.then(function () { return STOP ? undefined : fn(item, i); }).then(espera);
+      seq = seq.then(function () {
+        if (STOP) return undefined;
+        if (ET.core.http.caida && ET.core.http.caida()) {
+          STOP = true;
+          progRender('Operación cancelada: SIRETRAC no responde.');
+          return undefined;
+        }
+        return fn(item, i);
+      }).then(espera);
     });
     return seq;
   }
@@ -1813,7 +1936,9 @@
     var qs = 'Destino=13&numero=' + opts.idEntrega + '&codigo=' + encodeURIComponent(opts.codigo) + '&idCompra=' + opts.idCompra;
     var url = opts.base + '?' + qs;
     return apiPost(url, '').then(function (res) {
-      return { ok: res.status === 200 && res.text.indexOf('SesionExpirada') === -1, detalle: 'HTTP ' + res.status };
+      var ok = res.status === 200 && res.text.indexOf('SesionExpirada') === -1;
+      if (ok && res.json && res.json.result === false) ok = false;
+      return { ok: ok, detalle: 'HTTP ' + res.status };
     });
   }
 
@@ -1880,7 +2005,8 @@
 
   /* ============ FORMATO DE TRASPASO ============ */
   function generarFormatoTraspaso(compra) {
-    var kg = parseFloat(compra.volumen_Entregado) || 0;
+    var kg = parseFloat(String(compra.volumen_Entregado == null ? '' : compra.volumen_Entregado).replace(/[,\s]/g, ''));
+    if (!(kg > 0)) throw new Error('volumen de entrega vacío');
     var litros = (kg / 0.515).toFixed(0);
     var fecha = compra.fechaCompra || '';
     var diasSemana = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
@@ -2233,7 +2359,11 @@
         return r;
       }
       return cerrarEntrega({ idEntrega: r.idEntrega, codigo: r.codigo, idCompra: r.idCompra, base: '/GasLP/Recepcion/PaginaConfirmacion' })
-        .then(function (c) { r.msg = 'cierre: ' + (c.ok ? 'OK' : 'FALLO ' + c.detalle); return r; });
+        .then(function (c) {
+          if (c.ok === false) r.ok = false;
+          r.msg = 'cierre: ' + (c.ok ? 'OK' : 'FALLO ' + c.detalle);
+          return r;
+        });
     });
   }
 
@@ -2414,6 +2544,10 @@
         progStep('Omitida · sin traspaso pendiente · ' + item.compra.codigoRegistro);
         return;
       }
+      if (clasificarFactura(item.compra, item.referencia) !== 'pendiente') {
+        progStep('Omitida · compra no cerrada · ' + item.compra.codigoRegistro);
+        return;
+      }
       progRender('Subiendo ' + item.compra.codigoRegistro + '...');
       return (item.permisoUrl ? cambiarPermiso({ url: item.permisoUrl }) : Promise.resolve())
         .then(function () { return subirFormatoTraspaso(item.compra); })
@@ -2504,17 +2638,50 @@
     var tr = document.createElement('tr');
     tr.tabIndex = 0;
     tr.setAttribute('aria-selected', 'true');
-    tr.innerHTML = '<td><input type="checkbox" checked class="' + clase + '" data-idx="' + idx + '"></td>' +
-      '<td>' + c.codigoRegistro + '</td>' +
-      '<td>' + estatusTxt + '</td>' +
-      '<td>' + (c.volumen_Solicitado || '?') + ' / ' + (c.volumen_Entregado || '?') + '</td>' +
-      '<td>' + (c.fechaCompra || '') + '</td>' +
-      '<td>' + (c.permiso_Vendedor || '') + '</td>' +
-      (opts.motivo ? '<td><input type="text" class="acs-motivo" data-idx="' + idx + '" aria-label="Motivo de cierre" placeholder="Mínimo 5 caracteres"><span class="acs-motivo-msg" role="alert"></span></td>' : '') +
-      (opts.estado ? '<td class="acs-fact-estado">' + opts.estado + '</td>' : '');
+
+    var tdCheck = document.createElement('td');
+    var chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = true;
+    chk.className = clase;
+    chk.setAttribute('data-idx', String(idx));
+    tdCheck.appendChild(chk);
+    tr.appendChild(tdCheck);
+
+    tr.appendChild(celdaTexto(c.codigoRegistro));
+    tr.appendChild(celdaTexto(estatusTxt));
+    tr.appendChild(celdaTexto((c.volumen_Solicitado || '?') + ' / ' + (c.volumen_Entregado || '?')));
+    tr.appendChild(celdaTexto(c.fechaCompra || ''));
+    tr.appendChild(celdaTexto(c.permiso_Vendedor || ''));
+
+    if (opts.motivo) {
+      var tdMotivo = document.createElement('td');
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'acs-motivo';
+      input.setAttribute('data-idx', String(idx));
+      input.setAttribute('aria-label', 'Motivo de cierre');
+      input.placeholder = 'Mínimo 5 caracteres';
+      var msg = document.createElement('span');
+      msg.className = 'acs-motivo-msg';
+      msg.setAttribute('role', 'alert');
+      tdMotivo.appendChild(input);
+      tdMotivo.appendChild(msg);
+      tr.appendChild(tdMotivo);
+    }
+    if (opts.estado) tr.appendChild(celdaTexto(opts.estado, 'acs-fact-estado'));
+
     document.querySelector('#acs-tabla tbody').appendChild(tr);
     actualizarResumen();
     return tr;
+  }
+
+  /* Celda de texto plano: los datos de la API nunca se interpretan como HTML. */
+  function celdaTexto(texto, clase) {
+    var td = document.createElement('td');
+    if (clase) td.className = clase;
+    td.textContent = texto == null ? '' : String(texto);
+    return td;
   }
 
   /* Fila a la que salta el teclado; -1 = tecla no manejada. */
@@ -2942,7 +3109,11 @@
       generarFormatoTraspaso: generarFormatoTraspaso,
       clasificarFactura: clasificarFactura,
       filaDestino: filaDestino,
-      elegirVehiculo: elegirVehiculo
+      elegirVehiculo: elegirVehiculo,
+      cerrarEntrega: cerrarEntrega,
+      subirFacturasSeleccionadas: subirFacturasSeleccionadas,
+      agregarFacturaCandidata: agregarFacturaCandidata,
+      filaCompra: filaCompra
     };
   }
 
@@ -3147,7 +3318,11 @@ function partesFecha(f) {
   const safe = x => String(x).replace(/[\\/:*?"<>|]+/g, '_').trim();
   const seg = x => safe(x).replace(/\s+/g, ' ').replace(/[. ]+$/, '').slice(0, 90) || 'SIN_DATO';
   const esc = x => String(x == null ? '' : x).replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
-  const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  // Prefija ' a los valores que Excel interpretaría como fórmula (=, +, -, @, tab o CR).
+  const q = v => {
+    const s = String(v == null ? '' : v);
+    return '"' + (/^[=+\-@\t\r]/.test(s) ? "'" + s : s).replace(/"/g, '""') + '"';
+  };
 
   // Fechas de la cadena original: solo claves que contengan "fecha".
   function fechasCadena(o) {
@@ -3358,9 +3533,41 @@ function partesFecha(f) {
     }));
   }
 
+  // El prefetch no baja todo el rango: tope fijo y poda de pdfCache al pasarse.
+  const TOPE_PDF = 120;
+  function pendientesPrefetch(lista, cache, tope) {
+    return lista.filter(r => !r.error && r.it && r.it.idAcuse && !cache.has(r.it.idAcuse)).slice(0, tope);
+  }
+  function guardarCache(cache, id, b, tope) {
+    cache.set(id, b);
+    while (cache.size > tope) cache.delete(cache.keys().next().value);   // Map conserva el orden de alta
+    return b;
+  }
+
+  // Permiso activo de SIRETRAC: #codigoregistro y el span del navbar; nunca una tabla.
+  function clavePermiso(t) {
+    const m = String(t == null ? '' : t).match(/LP\/0*(\d+)\b/i);
+    if (m) return m[1];
+    const n = String(t == null ? '' : t).trim();
+    return /^\d{4,6}$/.test(n) ? String(+n) : '';
+  }
+  function permisoEnPantalla(codigos, doc) {
+    doc = doc || (typeof document === 'undefined' ? null : document);
+    if (!doc) return null;
+    const textos = [];
+    const oculto = doc.querySelector('#codigoregistro');
+    if (oculto) textos.push(oculto.value);
+    if (doc.querySelectorAll) doc.querySelectorAll('.navbar-custom-menu .hidden-xss').forEach(el => textos.push(el.textContent));
+    const txt = textos.map(t => String(t == null ? '' : t).trim()).find(clavePermiso);
+    const clave = clavePermiso(txt);
+    if (!clave) return null;
+    for (const c of codigos) if (clavePermiso(c) === clave) return String(c);
+    return null;
+  }
+
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, partesFecha, nombreDeEstacion, avance };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla };
   }
 
   // ===================== Arranque DOM =====================
@@ -3392,6 +3599,15 @@ function partesFecha(f) {
       const barra = $('#sa-prog'); if (barra) barra.hidden = true;
       const el = $('#sa-st'); if (el) el.textContent = t;
     };
+
+    const caido = () => !!(ET && ET.core && ET.core.http && ET.core.http.caida && ET.core.http.caida());
+    const MSG_CAIDA = 'SIRETRAC no responde: se detuvo el trabajo para no saturarlo.';
+    function pintarAvisos() {
+      const el = $('#sa-avisos'); if (!el) return;
+      el.innerHTML = AVISOS.map(t => '<div>' + esc(t) + '</div>').join('');
+      el.hidden = !AVISOS.length;
+    }
+    const aviso = t => { AVISOS.push(t); pintarAvisos(); };
 
     // Barra de cada paso; sustituye al texto mientras dura el escaneo.
     const progreso = (txt, hechos, total) => {
@@ -3431,7 +3647,7 @@ function partesFecha(f) {
       let i = 0;
       const W = Math.max(1, Math.min(n, items.length));
       await Promise.all(Array.from({ length: W }, async () => {
-        while (i < items.length && !cancel) { const k = i++; await fn(items[k], k); }
+        while (i < items.length && !cancel && !caido()) { const k = i++; await fn(items[k], k); }
       }));
     }
 
@@ -3486,11 +3702,6 @@ function partesFecha(f) {
 
     const firma = r => ((r && r.item2) || []).map(i => i.idAcuse).join(',') + '|' + ((r && r.item1 && r.item1.paginaFinal) || 1);
 
-    function permisoEnPantalla(codigos) {
-      const m = String((document.body.innerText || '')).match(/LP\/\d+\/[A-Z]+\/[A-Za-z]+\/\d{4}/);
-      return m && codigos.has(m[0]) ? m[0] : null;
-    }
-
     // 3-4 peticiones. Devuelve cómo recorrer y RESTAURA SIEMPRE el permiso original.
     async function detectaEstrategia(permisos, prog) {
       const codigos = new Set(permisos.map(p => p.codigo));
@@ -3523,9 +3734,9 @@ function partesFecha(f) {
       // Restauración SIEMPRE, también en global y param (la detección movió la sesión).
       if (activo) {
         try { prog('Restaurando el permiso original…'); await activaPermiso(activo); }
-        catch (e) { if (!abortado(e)) AVISOS.push('no se pudo restaurar el permiso: ' + e.message); }
+        catch (e) { if (!abortado(e)) aviso('no se pudo restaurar el permiso: ' + e.message); }
       } else {
-        AVISOS.push('no se pudo saber qué permiso tenías activo: puede quedar otro permiso seleccionado');
+        aviso('no se pudo saber qué permiso tenías activo: puede quedar otro permiso seleccionado');
       }
       return { modo, activo, fBase, paginas };
     }
@@ -3632,9 +3843,9 @@ function partesFecha(f) {
       if (pdfProm.has(id)) return pdfProm.get(id);
       const p = (async () => {
         const guardado = await leerDisco(id);
-        if (guardado) { pdfCache.set(id, guardado); return guardado; }
+        if (guardado) { guardarCache(pdfCache, id, guardado, TOPE_PDF); return guardado; }
         const b = await bajarPdf(it);
-        pdfCache.set(id, b);
+        guardarCache(pdfCache, id, b, TOPE_PDF);
         guardarDisco(id, b);
         return b;
       })();
@@ -3648,7 +3859,7 @@ function partesFecha(f) {
     let prefetchToken = 0;
     function prefetch(lista) {
       const token = ++prefetchToken;
-      const pend = lista.filter(r => !r.error && r.it && r.it.idAcuse && !pdfCache.has(r.it.idAcuse));
+      const pend = pendientesPrefetch(lista, pdfCache, TOPE_PDF);
       if (!pend.length) return;
       pool(pend, 3, async r => {
         if (token !== prefetchToken) return;
@@ -3755,7 +3966,7 @@ function partesFecha(f) {
       if (d1 > d2) { st('El rango está al revés'); return; }
       analizando = true; cancel = false; ctrl = new AbortController();
       periodo = { d1, d2 };
-      filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0;
+      filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0; pintarAvisos();
       render(); progreso('Analizando', 0, 0);
       try { await barrido(d1, d2); }
       catch (e) { if (!abortado(e)) st('Error: ' + e.message); }
@@ -3766,8 +3977,8 @@ function partesFecha(f) {
       progreso('Leyendo los permisos', 0, 0);
       let permisos = [];
       try { permisos = ordenPermisos(await listaPermisos()); }
-      catch (e) { if (!abortado(e)) AVISOS.push('no se pudieron leer los permisos: ' + e.message); }
-      if (!permisos.length) AVISOS.push('no se pudieron leer los permisos: se barrió solo el permiso activo');
+      catch (e) { if (!abortado(e)) aviso('no se pudieron leer los permisos: ' + e.message); }
+      if (!permisos.length) aviso('no se pudieron leer los permisos: se barrió solo el permiso activo');
 
       const desde = new Date(d1); desde.setDate(desde.getDate() - 7);   // margen de 7 días
       const hasta = new Date(d2); hasta.setDate(hasta.getDate() + 7);   // margen simétrico: la fecha de operación puede diferir de la de acuse
@@ -3791,7 +4002,7 @@ function partesFecha(f) {
             for (let j = 0; j < res.length; j++) {
               const r = res[j], n = nums[j];
               if (r.error) {
-                if (!abortado(r.error)) AVISOS.push(etiqueta + ' · página ' + n + ': ' + r.error.message);
+                if (!abortado(r.error)) aviso(etiqueta + ' · página ' + n + ': ' + r.error.message);
                 return;
               }
               fin = Math.max(fin, (r.item1 && r.item1.paginaFinal) || 1);
@@ -3826,7 +4037,7 @@ function partesFecha(f) {
             det = await detectaEstrategia(permisos, t => progreso(t, 0, 0));
           } catch (e) {
             if (abortado(e)) return;
-            AVISOS.push('no se pudo detectar cómo se recorre el listado: ' + e.message);
+            aviso('no se pudo detectar cómo se recorre el listado: ' + e.message);
             det = { modo: 'sesion', activo: null };
           }
           if (cancel) return;
@@ -4041,11 +4252,17 @@ function partesFecha(f) {
       let hechos = 0;
       st('PDFs 0/' + inc.length + '…');
       await pool(inc, WORKERS, async r => {
+        if (caido()) return;
         try { await pdfDe(r.it); }
         catch (e) { if (!abortado(e)) r.pdfError = e.message; }
         hechos++;
         if (hechos % 5 === 0 || hechos === inc.length) st('PDFs ' + hechos + '/' + inc.length + '…');
       });
+      if (caido() && !cancel) {
+        aviso(MSG_CAIDA);
+        st(MSG_CAIDA);
+        const e = new Error(MSG_CAIDA); e.caida = true; throw e;
+      }
     }
 
     async function descargarZip() {
@@ -4259,7 +4476,7 @@ function partesFecha(f) {
       cancel = true;
       try { ctrl.abort(); } catch (e) { /* ya abortado */ }
       ctrl = new AbortController();
-      filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0;
+      filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0; pintarAvisos();
       periodo = null;
       pdfCache.clear(); pdfProm.clear();
       prefetchToken++;
@@ -4299,6 +4516,8 @@ function partesFecha(f) {
       #sa-panel .sa-i.sa-dup{color:#706F6F}
       #sa-panel .sa-i.sa-err{color:#C60C0E}
       #sa-panel .sa-i[hidden]{display:none}
+      #sa-panel .sa-avisos{font-size:10px;line-height:1.35;color:#C60C0E;margin-top:3px;max-height:72px;overflow:auto}
+      #sa-panel .sa-avisos[hidden]{display:none}
       #sa-panel .sa-st{font-size:10px;line-height:1.3;color:#706F6F;min-height:13px;margin-top:3px;word-break:break-word}
       #sa-panel .sa-prog{margin-top:3px}
       #sa-panel .sa-prog[hidden]{display:none}
@@ -4354,6 +4573,7 @@ function partesFecha(f) {
         <div id="sa-prog-txt" class="sa-plabel"></div>
         <div class="sa-track"><i id="sa-prog-fill" class="sa-fill"></i></div>
       </div>
+      <div id="sa-avisos" class="sa-avisos" role="status" hidden></div>
       <div id="sa-st" class="sa-st" role="status"></div>`;
     ET.ui.tab('acuses', 'Acuses', 30, 300).appendChild(panel);
 
@@ -4565,6 +4785,7 @@ function partesFecha(f) {
             parsearEstaciones: parsearEstaciones,
             parsearReporte: parsearReporte,
             colaDeEstaciones: colaDeEstaciones,
+            elegirColumna: elegirColumna,
             sectorDesdeCelda: sectorDesdeCelda,
             valoresDeLinea: valoresDeLinea,
             resolverFilas: resolverFilas,
@@ -4598,6 +4819,7 @@ function partesFecha(f) {
     // Última pega del REPORTE: la usa el botón de la tabla de estaciones.
     var estacionesPegadas = [];
     var fechasPegadas = [];
+    var colaDetenida = false;
 
     function norm(s) {
         return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
@@ -4684,7 +4906,10 @@ function partesFecha(f) {
                     continue;
                 }
                 if (esCab) { fase = 'recipientes'; continue; }
-                if (nums.length === 2 && nBloques >= 1) { res.filaTotal = nums.map(aNumero); fase = 'recipientes'; continue; }
+                if (nums.length === 2 && nBloques >= 1 && norm(c[0]).indexOf('total') === 0) {
+                    res.filaTotal = nums.map(aNumero); fase = 'recipientes'; continue;
+                }
+                if (nums.length === 2) continue;
                 if (nums.length >= 3 && nums.length % 3 === 0) {
                     if (!seccion.primera && c[0] !== '') seccion.primera = c[0];
                     // Nombre de la estación por forma: la primera celda de texto de la
@@ -5020,17 +5245,19 @@ function partesFecha(f) {
 
     function elegirColumna(fechas, fechaActual) {
         if (!fechas.length) return 0;
-        if (fechas.length === 1) return 0;
         if (fechaActual) {
             for (var i = 0; i < fechas.length; i++) {
                 if (norm(fechas[i]) === norm(fechaActual)) return i;
             }
+            return -1;
         }
         return fechas.length - 1;
     }
 
     function valoresDeLinea(nums, col) {
         // Un bloque semanal trae 3 columnas por día: se elige la del día que se registra.
+        // Con 3 números y una columna > 0 no hay forma de saber de qué día son.
+        if (nums.length === 3 && col > 0) return null;
         var c = nums.length === 3 ? 0 : (col || 0);
         if (nums.length < 3 || nums.length % 3 !== 0 || c * 3 + 2 >= nums.length) return null;
         return { vol: nums[c * 3], imp: nums[c * 3 + 2] };
@@ -5105,7 +5332,12 @@ function partesFecha(f) {
             for (var l = 0; l < lineas.length; l++) {
                 var linea = lineas[l];
                 var vals = valoresDeLinea(linea.nums || [], col || 0);
-                if (!vals) continue;
+                if (!vals) {
+                    if ((linea.nums || []).length === 3 && col > 0) {
+                        warns.push('Una fila trae los valores de un solo día y no se sabe a cuál corresponde; no se escribió.');
+                    }
+                    continue;
+                }
                 var estado = sec.nombre || entidades[norm(sec.primera || '')] || '';
                 var municipio = sec.municipio || '';
                 var sector = sectorDesdeCelda(linea.celdas || []);
@@ -5234,6 +5466,10 @@ function partesFecha(f) {
         var warns = [];
         var fechaActual = $('#idFechaVenta').val().trim();
         var col = elegirColumna(p.fechas, fechaActual);
+        if (col === -1) {
+            toast(['La fecha de la página no está en el bloque pegado. No se llenó nada.']);
+            return;
+        }
         var fecha = p.fechas[col] || null;
 
         if (fecha) {
@@ -5352,7 +5588,12 @@ function partesFecha(f) {
                     var ln = lineasRec[r2];
                     if (!ln.nums || !ln.nums.length) continue;
                     var v = valoresDeLinea(ln.nums, col);
-                    if (!v) continue;
+                    if (!v) {
+                        if (ln.nums.length === 3 && col > 0) {
+                            warns.push('Recipiente fila ' + (ci + 1) + ': trae los valores de un solo día y no se sabe a cuál corresponde; no se escribió.');
+                        }
+                        continue;
+                    }
                     var filaRec = filasRec[ci];
                     var labelRec = 'Recipiente fila ' + (ci + 1);
                     await escribirYVerificarFila(filaRec, 'CantidadVendida-' + filaRec.idVenta, 'ValorVenta-' + filaRec.idVenta, 'cantidadVendida', 'valorVenta', v.vol, v.imp, msgs, warns, labelRec);
@@ -5462,7 +5703,7 @@ function partesFecha(f) {
                     resolve(!(d.result === true && d.mensaje === '0'));
                 },
                 error: function () {
-                    resolve(false);
+                    resolve('error');
                 }
             });
         });
@@ -5538,6 +5779,10 @@ function partesFecha(f) {
             var colVenta = p.ventas[i];
 
             var yaRegistrada = await fechaYaRegistrada(fecha);
+            if (yaRegistrada === 'error') {
+                toast(['No se pudo comprobar si ' + fecha + ' ya estaba registrada: fallo de red o del servidor. No se registró nada.']);
+                return;
+            }
             if (yaRegistrada) {
                 resultados.push(fecha + ': ya registrada, se omite');
                 continue;
@@ -5617,6 +5862,7 @@ function partesFecha(f) {
         var boton = document.getElementById('siretrac-venta-detener');
         if (boton) boton.addEventListener('click', function () {
             if (!window.confirm('¿Descartar la cola? Lo ya registrado no se toca; lo pendiente no se sube.')) return;
+            colaDetenida = true;
             ET.store.del('venta.cola');
             ET.store.del('venta.cola.auto');
             pintarCola();
@@ -5674,6 +5920,7 @@ function partesFecha(f) {
             }
             ET.store.set('venta.cola', cola);
             ET.store.set('venta.cola.auto', true);
+            colaDetenida = false;
             location.href = url;
         }).catch(function () {
             alert('No se pudo consultar la lista de permisos. No se navegó ni se guardó la cola.');
@@ -5707,10 +5954,20 @@ function partesFecha(f) {
             return;
         }
         var resultados = [];
+        colaDetenida = false;
         for (var i = 0; i < total; i++) {
+            if (colaDetenida) return;
+            if (ET.core && ET.core.http && typeof ET.core.http.caida === 'function' && ET.core.http.caida()) {
+                toast(['Se detuvo la subida: el servidor no responde (cortacircuitos activo). La cola se conserva.']);
+                return;
+            }
             var fecha = est.fechas[i];
             var colVenta = est.ventas[i];
             var ya = await fechaYaRegistrada(fecha);
+            if (ya === 'error') {
+                toast(['No se pudo comprobar si ' + fecha + ' ya estaba registrada: fallo de red o del servidor. La cola se detuvo sin registrar.']);
+                return;
+            }
             if (ya) {
                 resultados.push(fecha + ': ya registrada, se omite');
                 continue;
@@ -5727,6 +5984,7 @@ function partesFecha(f) {
             await sleep(800);
         }
         cola.shift();
+        if (colaDetenida) return;
         if (!cola.length) {
             ET.store.del('venta.cola');
             ET.store.del('venta.cola.auto');
@@ -5736,6 +5994,7 @@ function partesFecha(f) {
         // Si no se resuelve el siguiente permiso no se guarda el avance: la
         // cola original sigue y los días ya registrados se omiten al reintentar.
         resolverUrlPermiso(cola[0].permiso).then(function (url) {
+            if (colaDetenida) return;
             if (!url) {
                 alert('Estación ' + (est.nombre || est.permiso) + ' registrada.\n\n' +
                     'No se encontró el siguiente permiso ' + cola[0].permiso + '.\n' +
@@ -6173,11 +6432,6 @@ function partesFecha(f) {
       } else {
         text = text.replace(',', '.');
       }
-    } else if (lastDot !== -1) {
-      // 0.750 es un decimal; 1.234 se mantiene como separador de miles.
-      if (!/^0\.\d{3}$/.test(text) && /^\d{1,3}(?:\.\d{3})+$/.test(text)) {
-        text = text.replace(/\./g, '');
-      }
     }
 
     const number = Number(text);
@@ -6300,6 +6554,7 @@ function partesFecha(f) {
   // Formato de la plantilla real: una fila "ENTRADA POR TRASPASO" y fechas largas en el encabezado.
   function parseTransferSheet(table, headers, delimiter, weekStart) {
     let transferRow = null;
+    let transferBlocks = 0;
     let branch = '';
     let permit = '';
 
@@ -6309,12 +6564,21 @@ function partesFecha(f) {
       });
       if (firstIndex === -1) continue;
       const first = normalizeText(cells[firstIndex]);
-      if (first.startsWith('entrada por traspaso')) transferRow = cells;
+      if (first.startsWith('entrada por traspaso')) {
+        transferBlocks += 1;
+        transferRow = cells;
+      }
       if (first.startsWith('sucursal')) branch = String(cells[firstIndex + 1] || '').trim();
       if (/^n[°º]?\s*de\s*permiso/.test(first)) {
         const found = cells.join(' ').match(/(?:CNE\/)?LP\/\d+\/[A-Z]+\/[A-Z]+\/\d+/i);
         if (found) permit = found[0].toUpperCase();
       }
+    }
+    /* Dos bloques comparten una sola fila de fechas: unirlos inventaría datos. */
+    if (transferBlocks > 1) {
+      throw new Error(
+        'La hoja tiene más de un bloque "ENTRADA POR TRASPASO". Pega un solo bloque por matriz.'
+      );
     }
     if (!transferRow) return null;
 
@@ -7456,7 +7720,17 @@ function partesFecha(f) {
     }
     if (!ui.weekStart.value) ui.weekStart.value = previousMondayISO();
 
-    const parsed = parseMatrix(text, { weekStart: ui.weekStart.value });
+    let parsed;
+    try {
+      parsed = parseMatrix(text, { weekStart: ui.weekStart.value });
+    } catch (error) {
+      state.parsed = null;
+      state.preview = [];
+      ui.stations.value = '';
+      ui.preview.textContent = '';
+      ui.matrixStatus.textContent = error.message;
+      return null;
+    }
     state.parsed = parsed;
 
     const stations = uniqueStations(parsed);
@@ -8195,7 +8469,6 @@ function partesFecha(f) {
             ' clave(s) para deduplicar.'
         );
 
-        const batchKeys = new Set();
         for (const transfer of group.transfers) {
           const key = normalizeKey(
             transfer.destinationPermit,
@@ -8203,22 +8476,19 @@ function partesFecha(f) {
             transfer.volumeKg,
             transfer.sourcePermit
           );
-          if (batchKeys.has(key)) {
-            skipped += 1;
-            say('Omitido (duplicado en el lote): ' + transfer.destinationPermit + ' ' + transfer.operationDate + ' ' + formatKg(transfer.volumeKg));
-            continue;
-          }
           if (existing.has(key)) {
             skipped += 1;
             say('Omitido (ya existe): ' + transfer.destinationPermit + ' ' + transfer.operationDate + ' ' + formatKg(transfer.volumeKg));
             continue;
           }
+          if (ET.core && ET.core.http && ET.core.http.caida && ET.core.http.caida()) {
+            say('Operación cancelada: SIRETRAC no responde.');
+            break;
+          }
 
           say('Enviando ' + transfer.destinationPermit + ' ' + transfer.operationDate + ' ' + formatKg(transfer.volumeKg) + '…');
           const text = await postTransfer(transfer);
           const registrationNumber = findRegistrationNumber(text);
-          batchKeys.add(key);
-          existing.add(key);
           state.ledger.push({
             key: key,
             permit: transfer.destinationPermit,
@@ -9495,7 +9765,11 @@ function partesFecha(f) {
       ],
       defecto: [],
       leer: function () { return loadPlantillas(); },
-      guardar: function (v) { savePlantillas(v); refreshPlantillas(); },
+      guardar: function (v) {
+        savePlantillas(v);
+        refreshPlantillas();
+        invalidateTransfers('Mapeo actualizado; vuelve a generar los traspasos.');
+      },
     });
   }
 })();

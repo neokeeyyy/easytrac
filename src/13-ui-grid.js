@@ -103,6 +103,7 @@
   function gridEditar(celda, valor) {
     celda.textContent = valor == null ? '' : String(valor);
     celda.className = esNumero(valor) ? 'num' : '';
+    celda.dispatchEvent(new Event('input', { bubbles: true }));
     return celda;
   }
 

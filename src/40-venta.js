@@ -16,6 +16,7 @@
             parsearEstaciones: parsearEstaciones,
             parsearReporte: parsearReporte,
             colaDeEstaciones: colaDeEstaciones,
+            elegirColumna: elegirColumna,
             sectorDesdeCelda: sectorDesdeCelda,
             valoresDeLinea: valoresDeLinea,
             resolverFilas: resolverFilas,
@@ -49,6 +50,7 @@
     // Última pega del REPORTE: la usa el botón de la tabla de estaciones.
     var estacionesPegadas = [];
     var fechasPegadas = [];
+    var colaDetenida = false;
 
     function norm(s) {
         return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
@@ -135,7 +137,10 @@
                     continue;
                 }
                 if (esCab) { fase = 'recipientes'; continue; }
-                if (nums.length === 2 && nBloques >= 1) { res.filaTotal = nums.map(aNumero); fase = 'recipientes'; continue; }
+                if (nums.length === 2 && nBloques >= 1 && norm(c[0]).indexOf('total') === 0) {
+                    res.filaTotal = nums.map(aNumero); fase = 'recipientes'; continue;
+                }
+                if (nums.length === 2) continue;
                 if (nums.length >= 3 && nums.length % 3 === 0) {
                     if (!seccion.primera && c[0] !== '') seccion.primera = c[0];
                     // Nombre de la estación por forma: la primera celda de texto de la
@@ -471,17 +476,19 @@
 
     function elegirColumna(fechas, fechaActual) {
         if (!fechas.length) return 0;
-        if (fechas.length === 1) return 0;
         if (fechaActual) {
             for (var i = 0; i < fechas.length; i++) {
                 if (norm(fechas[i]) === norm(fechaActual)) return i;
             }
+            return -1;
         }
         return fechas.length - 1;
     }
 
     function valoresDeLinea(nums, col) {
         // Un bloque semanal trae 3 columnas por día: se elige la del día que se registra.
+        // Con 3 números y una columna > 0 no hay forma de saber de qué día son.
+        if (nums.length === 3 && col > 0) return null;
         var c = nums.length === 3 ? 0 : (col || 0);
         if (nums.length < 3 || nums.length % 3 !== 0 || c * 3 + 2 >= nums.length) return null;
         return { vol: nums[c * 3], imp: nums[c * 3 + 2] };
@@ -556,7 +563,12 @@
             for (var l = 0; l < lineas.length; l++) {
                 var linea = lineas[l];
                 var vals = valoresDeLinea(linea.nums || [], col || 0);
-                if (!vals) continue;
+                if (!vals) {
+                    if ((linea.nums || []).length === 3 && col > 0) {
+                        warns.push('Una fila trae los valores de un solo día y no se sabe a cuál corresponde; no se escribió.');
+                    }
+                    continue;
+                }
                 var estado = sec.nombre || entidades[norm(sec.primera || '')] || '';
                 var municipio = sec.municipio || '';
                 var sector = sectorDesdeCelda(linea.celdas || []);
@@ -685,6 +697,10 @@
         var warns = [];
         var fechaActual = $('#idFechaVenta').val().trim();
         var col = elegirColumna(p.fechas, fechaActual);
+        if (col === -1) {
+            toast(['La fecha de la página no está en el bloque pegado. No se llenó nada.']);
+            return;
+        }
         var fecha = p.fechas[col] || null;
 
         if (fecha) {
@@ -803,7 +819,12 @@
                     var ln = lineasRec[r2];
                     if (!ln.nums || !ln.nums.length) continue;
                     var v = valoresDeLinea(ln.nums, col);
-                    if (!v) continue;
+                    if (!v) {
+                        if (ln.nums.length === 3 && col > 0) {
+                            warns.push('Recipiente fila ' + (ci + 1) + ': trae los valores de un solo día y no se sabe a cuál corresponde; no se escribió.');
+                        }
+                        continue;
+                    }
                     var filaRec = filasRec[ci];
                     var labelRec = 'Recipiente fila ' + (ci + 1);
                     await escribirYVerificarFila(filaRec, 'CantidadVendida-' + filaRec.idVenta, 'ValorVenta-' + filaRec.idVenta, 'cantidadVendida', 'valorVenta', v.vol, v.imp, msgs, warns, labelRec);
@@ -913,7 +934,7 @@
                     resolve(!(d.result === true && d.mensaje === '0'));
                 },
                 error: function () {
-                    resolve(false);
+                    resolve('error');
                 }
             });
         });
@@ -989,6 +1010,10 @@
             var colVenta = p.ventas[i];
 
             var yaRegistrada = await fechaYaRegistrada(fecha);
+            if (yaRegistrada === 'error') {
+                toast(['No se pudo comprobar si ' + fecha + ' ya estaba registrada: fallo de red o del servidor. No se registró nada.']);
+                return;
+            }
             if (yaRegistrada) {
                 resultados.push(fecha + ': ya registrada, se omite');
                 continue;
@@ -1068,6 +1093,7 @@
         var boton = document.getElementById('siretrac-venta-detener');
         if (boton) boton.addEventListener('click', function () {
             if (!window.confirm('¿Descartar la cola? Lo ya registrado no se toca; lo pendiente no se sube.')) return;
+            colaDetenida = true;
             ET.store.del('venta.cola');
             ET.store.del('venta.cola.auto');
             pintarCola();
@@ -1125,6 +1151,7 @@
             }
             ET.store.set('venta.cola', cola);
             ET.store.set('venta.cola.auto', true);
+            colaDetenida = false;
             location.href = url;
         }).catch(function () {
             alert('No se pudo consultar la lista de permisos. No se navegó ni se guardó la cola.');
@@ -1158,10 +1185,20 @@
             return;
         }
         var resultados = [];
+        colaDetenida = false;
         for (var i = 0; i < total; i++) {
+            if (colaDetenida) return;
+            if (ET.core && ET.core.http && typeof ET.core.http.caida === 'function' && ET.core.http.caida()) {
+                toast(['Se detuvo la subida: el servidor no responde (cortacircuitos activo). La cola se conserva.']);
+                return;
+            }
             var fecha = est.fechas[i];
             var colVenta = est.ventas[i];
             var ya = await fechaYaRegistrada(fecha);
+            if (ya === 'error') {
+                toast(['No se pudo comprobar si ' + fecha + ' ya estaba registrada: fallo de red o del servidor. La cola se detuvo sin registrar.']);
+                return;
+            }
             if (ya) {
                 resultados.push(fecha + ': ya registrada, se omite');
                 continue;
@@ -1178,6 +1215,7 @@
             await sleep(800);
         }
         cola.shift();
+        if (colaDetenida) return;
         if (!cola.length) {
             ET.store.del('venta.cola');
             ET.store.del('venta.cola.auto');
@@ -1187,6 +1225,7 @@
         // Si no se resuelve el siguiente permiso no se guarda el avance: la
         // cola original sigue y los días ya registrados se omiten al reintentar.
         resolverUrlPermiso(cola[0].permiso).then(function (url) {
+            if (colaDetenida) return;
             if (!url) {
                 alert('Estación ' + (est.nombre || est.permiso) + ' registrada.\n\n' +
                     'No se encontró el siguiente permiso ' + cola[0].permiso + '.\n' +

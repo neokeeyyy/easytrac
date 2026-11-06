@@ -2,7 +2,7 @@
 
 const test = require('bun:test').test;
 const assert = require('node:assert');
-const { norm, parsear, parsearEstaciones, parsearReporte, colaDeEstaciones, resolverFilas, valoresDeLinea, xlsxHojaATexto, rutaHojaReporte } = require('../src/40-venta.js');
+const { norm, parsear, parsearEstaciones, parsearReporte, colaDeEstaciones, elegirColumna, resolverFilas, valoresDeLinea, xlsxHojaATexto, rutaHojaReporte } = require('../src/40-venta.js');
 const { readFileSync } = require('node:fs');
 
 
@@ -311,5 +311,40 @@ test('rutaHojaReporte: resuelve REPORTE por rId y falla si no existe', () => {
     /El archivo no tiene una hoja REPORTE/
   );
 });
+
+test('fecha de la pagina fuera del bloque no elige ninguna columna', () => {
+  const fechas = ['01/12/2025', '02/12/2025'];
+  assert.equal(elegirColumna(fechas, '09/12/2025'), -1);
+  assert.equal(elegirColumna(['01/12/2025'], '09/12/2025'), -1);
+  assert.equal(elegirColumna(fechas, '02/12/2025'), 1);
+  assert.equal(elegirColumna(fechas, ''), 1);
+});
+
+test('fila de 2 numeros sin etiqueta TOTAL no cambia a recipientes', () => {
+  const texto = [
+    'MUNICIPIO\tLOCALIDAD\tSEGMENTO\tVOLUMEN\tPRECIO\tIMPORTE',
+    'PUEBLA\tCHOLULA\tCOMERCIAL\t100\t11\t1100',
+    '10\t20',
+    'PUEBLA\tCHOLULA\tRESIDENCIAL\t50\t22\t200',
+  ].join('\n');
+  const res = parsear(texto);
+
+  assert.equal(res.filaTotal, null);
+  assert.equal(res.bloques[0].lineas.length, 2);
+  assert.equal(res.recipientes.lineas.length, 0);
+});
+
+test('fila de 3 numeros con col=1 no se escribe en el dia 0', () => {
+  assert.equal(valoresDeLinea([745, 11.44, 8520.34], 1), null);
+
+  const filas = [fila(1, 'A', 'B'), fila(2, 'C', 'D')];
+  const bloques = [{ lineas: [{ celdas: ['', '', ''], nums: [745, 11.44, 8520.34] }] }];
+  const r = resolverFilas(bloques, filas, 1);
+
+  assert.equal(r.asignaciones.length, 0);
+  assert.equal(r.warns.length, 1);
+  assert.ok(r.warns[0].indexOf('no se sabe a cuál') >= 0);
+});
+
 
 
