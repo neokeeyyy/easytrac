@@ -451,6 +451,7 @@ function partesFecha(f) {
       await Promise.all(Array.from({ length: W }, async () => {
         while (i < items.length && !cancel && !caido()) { const k = i++; await fn(items[k], k); }
       }));
+      if (caido() && !cancel && !AVISOS.includes(MSG_CAIDA)) { aviso(MSG_CAIDA); st(MSG_CAIDA); }
     }
 
     // ---------- Permisos del permisionario ----------

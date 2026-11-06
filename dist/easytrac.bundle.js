@@ -3649,6 +3649,7 @@ function partesFecha(f) {
       await Promise.all(Array.from({ length: W }, async () => {
         while (i < items.length && !cancel && !caido()) { const k = i++; await fn(items[k], k); }
       }));
+      if (caido() && !cancel && !AVISOS.includes(MSG_CAIDA)) { aviso(MSG_CAIDA); st(MSG_CAIDA); }
     }
 
     // ---------- Permisos del permisionario ----------
@@ -3842,10 +3843,12 @@ function partesFecha(f) {
       if (pdfCache.has(id)) return Promise.resolve(pdfCache.get(id));
       if (pdfProm.has(id)) return pdfProm.get(id);
       const p = (async () => {
+        // Durante una descarga no se poda: el ZIP necesita todos los PDFs elegidos.
+        const tope = descargando ? Infinity : TOPE_PDF;
         const guardado = await leerDisco(id);
-        if (guardado) { guardarCache(pdfCache, id, guardado, TOPE_PDF); return guardado; }
+        if (guardado) { guardarCache(pdfCache, id, guardado, tope); return guardado; }
         const b = await bajarPdf(it);
-        guardarCache(pdfCache, id, b, TOPE_PDF);
+        guardarCache(pdfCache, id, b, tope);
         guardarDisco(id, b);
         return b;
       })();
