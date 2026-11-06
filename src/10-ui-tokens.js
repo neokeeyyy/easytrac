@@ -2,7 +2,6 @@
    Source: ~/.config/opencode/skills/house-ui/tokens.css */
 (function () {
   'use strict';
-  var ET = globalThis.EasyTrac;
   if (document.getElementById('easytrac-tokens')) return;
   var st = document.createElement('style');
   st.id = 'easytrac-tokens';

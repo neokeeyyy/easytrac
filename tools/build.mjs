@@ -62,7 +62,9 @@ const sources = MODULES.map((m) => ({
   code: readFileSync('src/' + m, 'utf8').replace(/ET\.version\s*=\s*'0\.0\.0-dev'/, "ET.version = '" + VERSION + "'"),
 }));
 
-const missing = sources.filter((s) => !s.code.includes('globalThis'));
+/* 10-ui-tokens solo inyecta CSS: no usa el namespace. */
+const SIN_NAMESPACE = new Set(['10-ui-tokens.js']);
+const missing = sources.filter((s) => !SIN_NAMESPACE.has(s.name) && !s.code.includes('globalThis'));
 if (missing.length) throw new Error('module without EasyTrac namespace: ' + missing.map((s) => s.name).join(', '));
 const core = sources.find((s) => s.name === '01-core.js');
 if (core.code.includes("ET.version = '0.0.0-dev'")) throw new Error('version placeholder not replaced in 01-core.js');

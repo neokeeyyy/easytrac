@@ -61,7 +61,6 @@
     tipoSuministradorId: '19',
     tipoSuministradorName: 'Distribuidor por Planta de Distribucion',
     mappingRestored: false,
-    autoMapped: false,
     parsed: null,
     preview: [],
     transfers: [],
@@ -240,14 +239,6 @@
     }
     cells.push(current);
     return cells;
-  }
-
-  function nextMondayISO(from) {
-    const source = from instanceof Date && !Number.isNaN(from.getTime()) ? from : new Date();
-    const base = new Date(Date.UTC(source.getFullYear(), source.getMonth(), source.getDate()));
-    const add = (8 - base.getUTCDay()) % 7 || 7;
-    base.setUTCDate(base.getUTCDate() + add);
-    return toISO(base);
   }
 
   // Lunes de la semana anterior (semana operativa lunes-domingo).
@@ -606,50 +597,6 @@
       if (key) keys.add(key);
     }
     return keys;
-  }
-
-  function suggestPermit(station, permits) {
-    const target = normalizeText(station);
-    if (!target || !permits || !permits.length) return null;
-    const targetWords = Array.from(
-      new Set(
-        target.split(' ').filter(function (word) {
-          return word.length > 3;
-        })
-      )
-    );
-    const searchable = permits.map(function (permit) {
-      return normalizeText(
-        String(permit.permit || '') + ' ' + String(permit.activity || '') + ' ' + String(permit.razonSocial || '')
-      );
-    });
-
-    let best = null;
-    let bestScore = 0;
-    permits.forEach(function (permit, index) {
-      const permitText = normalizeText(permit.permit);
-      let score = 0;
-      if (target === permitText) score += 1000;
-      else if (target.includes(permitText)) score += 500;
-      else if (permitText.includes(target)) score += 300;
-
-      const numberMatch = String(permit.permit || '').match(/\/(\d+)\//);
-      if (numberMatch && targetWords.includes(numberMatch[1])) score += 200;
-
-      for (const word of targetWords) {
-        const hits = searchable.filter(function (haystack) {
-          return haystack.split(' ').includes(word);
-        }).length;
-        // Una palabra presente en casi todos los permisos no distingue nada.
-        if (hits > 0 && hits * 2 < permits.length) score += 10;
-      }
-
-      if (score > bestScore) {
-        bestScore = score;
-        best = permit;
-      }
-    });
-    return bestScore > 0 ? best : null;
   }
 
   // Asigna por orden las estaciones sin destino. Es una sugerencia visible:
@@ -2176,9 +2123,6 @@
         );
       })
       .join('\n');
-    const autoNote = state.autoMapped
-      ? '\n\nEl mapeo se asignó por orden. Revisa que cada estación tenga el permiso correcto.'
-      : '';
     const confirmed = window.confirm(
       'Se enviarán ' +
         state.transfers.length +
@@ -2188,7 +2132,6 @@
         '\n\n' +
         detalle +
         (state.transfers.length > 20 ? '\n…' : '') +
-        autoNote +
         '\n\n¿Continuar?'
     );
     if (!confirmed) return;
@@ -2422,7 +2365,6 @@
     state.parsed = null;
     state.preview = [];
     state.transfers = [];
-    state.autoMapped = false;
     ui.matrix.innerHTML = '';
     ui.preview.textContent = '';
     ui.output.textContent = '';
@@ -3442,7 +3384,6 @@
     extractAcuses: extractAcuses,
     acuseKey: acuseKey,
     acuseKeys: acuseKeys,
-    suggestPermit: suggestPermit,
     assignByOrder: assignByOrder,
     relatePermits: relatePermits,
     migrateMapping: migrateMapping,
@@ -3455,7 +3396,6 @@
     findRegistrationNumber: findRegistrationNumber,
     sourcePermitStatus: sourcePermitStatus,
     isExpiredSessionHtml: isExpiredSessionHtml,
-    nextMondayISO: nextMondayISO,
     previousMondayISO: previousMondayISO,
     todayISO: todayISO,
   };

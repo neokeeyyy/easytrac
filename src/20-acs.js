@@ -163,7 +163,6 @@
 
   /* ============ ESTADO / PROGRESO ============ */
   var STOP = false;
-  var filas = [];
   var PROG = { total: 0, hecho: 0 };
 
   function detener() { STOP = true; }

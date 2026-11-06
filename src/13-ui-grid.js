@@ -79,11 +79,6 @@
     return wrap;
   }
 
-  function celdas(grid) {
-    var table = grid.tagName === 'TABLE' ? grid : grid.querySelector('table.et-grid');
-    return table ? table.querySelectorAll('td,th') : [];
-  }
-
   function gridSerializar(grid) {
     var table = grid.tagName === 'TABLE' ? grid : grid.querySelector('table.et-grid');
     if (!table) return '';

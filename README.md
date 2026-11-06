@@ -2,7 +2,7 @@
 
 Una barra lateral para SIRETRAC que reúne las herramientas de trabajo diario en un solo script. Cada función aparece solo en las páginas donde funciona.
 
-Reemplaza a cinco userscripts que vivían sueltos. Los originales quedan en `legacy/` como referencia y para regenerar los módulos con `tools/split.mjs`.
+Reemplaza a cinco userscripts que vivían sueltos. Los originales quedan en `legacy/` como referencia.
 
 ## Qué incluye
 
@@ -55,7 +55,7 @@ src/
   50-fecha.js           SToolkit
   70-traspasos.js       traspasos GLP
 test/                   bun test (146 pruebas)
-tools/                  split, build, syntax, tokens, preview, release
+tools/                  build, syntax, preview, release
 dist/                   bundle y standalone generados
 legacy/                 los 5 userscripts originales
 ```

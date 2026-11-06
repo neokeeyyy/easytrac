@@ -518,18 +518,6 @@
         return true;
     }
 
-    function pintarFilaAT(fila) {
-        var ok1 = pintarInput('Volumen-' + fila.idVenta, fila.volumen);
-        var ok2 = pintarInput('ValorVenta-' + fila.idVenta, fila.valorVenta);
-        return ok1 && ok2;
-    }
-
-    function pintarFilaRec(fila) {
-        var ok1 = pintarInput('CantidadVendida-' + fila.idVenta, fila.cantidadVendida);
-        var ok2 = pintarInput('ValorVenta-' + fila.idVenta, fila.valorVenta);
-        return ok1 && ok2;
-    }
-
     // Compara una fila de la tabla con los datos del bloque; solo compara
     // los campos que el bloque trae (nombre/municipio/sector pueden faltar).
     function filaCoincide(fila, estado, municipio, sector) {

@@ -34,7 +34,7 @@ obligatorio si tocaste `src/`: el loader y el standalone no se actualizan solos.
 EasyTrac.user.js     loader instalable (cabecera y 19 @require)
 src/                 módulos fuente
 test/                pruebas
-tools/               split, build, syntax, tokens, preview, release
+tools/               build, syntax, preview, release
 dist/                bundle y standalone generados
 legacy/              userscripts originales, como referencia
 ```
