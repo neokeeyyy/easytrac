@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.36
+// @version      1.0.37
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -24,7 +24,7 @@
   var ET = root.EasyTrac = root.EasyTrac || {};
 
   ET.base = 'https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@main/src/';
-  ET.version = '1.0.36'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.37'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -3360,6 +3360,13 @@ function partesFecha(f) {
   const esPlantaDist = p => /distribuidor|\/dist\//i.test(String(p.actividad || '') + ' ' + String(p.codigo || ''));
   const ordenPermisos = ps => ps.slice().sort((a, b) => (esPlantaDist(a) ? 1 : 0) - (esPlantaDist(b) ? 1 : 0));
 
+  // Avance de un paso de la barra: sin total es indeterminado.
+  function avance(hechos, total) {
+    const t = Number(total) || 0;
+    if (t <= 0) return { pct: 0, indet: true };
+    return { pct: Math.max(0, Math.min(100, 100 * (Number(hechos) || 0) / t)), indet: false };
+  }
+
   // Escaneo de permisos: la misma tabla #example que usa siretrac-traspasos.user.js.
   // Alias del escáner único: { id, codigo, razon, actividad } para el resto de este módulo.
   function permisosDeTabla(doc) {
@@ -3370,7 +3377,7 @@ function partesFecha(f) {
 
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, partesFecha, nombreDeEstacion };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, partesFecha, nombreDeEstacion, avance };
   }
 
   // ===================== Arranque DOM =====================
@@ -3398,7 +3405,22 @@ function partesFecha(f) {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const esperaFallo = k => sleep(400 * (k * 2 * k + 1));
     const abortado = e => !!e && (e.name === 'AbortError' || /abort/i.test(String(e.message || '')));
-    const st = t => { const el = $('#sa-st'); if (el) el.textContent = t; };
+    const st = t => {
+      const barra = $('#sa-prog'); if (barra) barra.hidden = true;
+      const el = $('#sa-st'); if (el) el.textContent = t;
+    };
+
+    // Barra de cada paso; sustituye al texto mientras dura el escaneo.
+    const progreso = (txt, hechos, total) => {
+      const barra = $('#sa-prog'); if (!barra) return;
+      const { pct, indet } = avance(hechos, total);
+      barra.hidden = false;
+      barra.classList.toggle('indet', indet);
+      const fill = $('#sa-prog-fill'); if (fill) fill.style.width = indet ? '' : pct.toFixed(1) + '%';
+      const et = $('#sa-prog-txt');
+      if (et) et.textContent = txt + (indet ? '' : ' ' + hechos + '/' + total);
+      const el = $('#sa-st'); if (el) el.textContent = '';
+    };
 
     // Red con reintentos. 401 = sesión caducada: no se reintenta.
     async function post(url, data, reintentos) {
@@ -3751,14 +3773,14 @@ function partesFecha(f) {
       analizando = true; cancel = false; ctrl = new AbortController();
       periodo = { d1, d2 };
       filas = []; sel = new Set(); anchor = null; foco = null; AVISOS.length = 0;
-      render(); st('Analizando…');
+      render(); progreso('Analizando', 0, 0);
       try { await barrido(d1, d2); }
       catch (e) { if (!abortado(e)) st('Error: ' + e.message); }
       finally { analizando = false; }
     }
 
     async function barrido(d1, d2) {
-      st('Leyendo los permisos…');
+      progreso('Leyendo los permisos', 0, 0);
       let permisos = [];
       try { permisos = ordenPermisos(await listaPermisos()); }
       catch (e) { if (!abortado(e)) AVISOS.push('no se pudieron leer los permisos: ' + e.message); }
@@ -3775,31 +3797,38 @@ function partesFecha(f) {
 
       // La lista viene de más reciente a más antigua. Se piden las páginas en lotes de 4
       // (sin pausa entre ellas) y se corta al pasar el margen inferior.
+      const pags = { v: 0, t: 0 };   // páginas pedidas / páginas que el barrido va a pedir
       const lista = async (p, etiqueta) => {
-        let fin = 1, viejas = 0, pag = 1;
-        while (pag <= fin && !cancel) {
-          const nums = [];
-          for (let k = 0; k < 4 && pag + k <= fin; k++) nums.push(pag + k);
-          const res = await Promise.all(nums.map(n => paginaDe(n, p).then(r => r, e => ({ error: e }))));
-          for (let j = 0; j < res.length; j++) {
-            const r = res[j], n = nums[j];
-            if (r.error) {
-              if (!abortado(r.error)) AVISOS.push(etiqueta + ' · página ' + n + ': ' + r.error.message);
-              return;
+        let fin = 1, viejas = 0, pag = 1, decl = 0, vistas = 0;
+        try {
+          while (pag <= fin && !cancel) {
+            const nums = [];
+            for (let k = 0; k < 4 && pag + k <= fin; k++) nums.push(pag + k);
+            const res = await Promise.all(nums.map(n => paginaDe(n, p).then(r => r, e => ({ error: e }))));
+            for (let j = 0; j < res.length; j++) {
+              const r = res[j], n = nums[j];
+              if (r.error) {
+                if (!abortado(r.error)) AVISOS.push(etiqueta + ' · página ' + n + ': ' + r.error.message);
+                return;
+              }
+              fin = Math.max(fin, (r.item1 && r.item1.paginaFinal) || 1);
+              if (fin > decl) { pags.t += fin - decl; decl = fin; }
+              const items = r.item2 || [];
+              let maxF = null;
+              for (let i = 0; i < items.length; i++) {
+                const it = items[i], f = dmy(it.fechaAcuse);
+                if (f && (!maxF || f > maxF)) maxF = f;
+                if (!f || f < desde || f > hasta) continue;
+                cand.push({ it, p, orden: n * 1000 + i });
+              }
+              vistas++; pags.v++;
+              progreso(etiqueta + ' · ' + cand.length + ' acuses', pags.v, pags.t);
+              if (!maxF || maxF < desde) { if (++viejas >= 2) return; } else viejas = 0;
             }
-            fin = Math.max(fin, (r.item1 && r.item1.paginaFinal) || 1);
-            const items = r.item2 || [];
-            let maxF = null;
-            for (let i = 0; i < items.length; i++) {
-              const it = items[i], f = dmy(it.fechaAcuse);
-              if (f && (!maxF || f > maxF)) maxF = f;
-              if (!f || f < desde || f > hasta) continue;
-              cand.push({ it, p, orden: n * 1000 + i });
-            }
-            st(etiqueta + ' · pág. ' + n + '/' + fin + ' · ' + cand.length + ' acuses');
-            if (!maxF || maxF < desde) { if (++viejas >= 2) return; } else viejas = 0;
+            pag = nums[nums.length - 1] + 1;
           }
-          pag = nums[nums.length - 1] + 1;
+        } finally {
+          pags.t -= Math.max(0, decl - vistas);   // páginas que el corte dejó sin pedir
         }
       };
 
@@ -3811,7 +3840,7 @@ function partesFecha(f) {
           det = { modo: ESTRAT.modo, activo: permisoEnPantalla(new Set(codigos)) || ESTRAT.activo };
         } else {
           try {
-            det = await detectaEstrategia(permisos, st);
+            det = await detectaEstrategia(permisos, t => progreso(t, 0, 0));
           } catch (e) {
             if (abortado(e)) return;
             AVISOS.push('no se pudo detectar cómo se recorre el listado: ' + e.message);
@@ -3865,17 +3894,18 @@ function partesFecha(f) {
         if (cancel) return;
         arma(r, c, d1, d2);
         hechas++;
-        if (hechas % 5 === 0 || hechas === total) st('Cadenas ' + hechas + '/' + total);
+        progreso('Cadenas', hechas, total);
       });
 
       // Repaso en serie: alguna cadena puede fallar de forma transitoria en el pool.
       const sinCadena = tmp.filter(r => !r.c);
       if (sinCadena.length) {
-        st('Repasando ' + sinCadena.length + ' cadenas…');
-        for (const r of sinCadena) {
+        progreso('Repasando', 0, sinCadena.length);
+        for (let i = 0; i < sinCadena.length; i++) {
           if (cancel) return;
-          const c = await pideCadena(r.it, 1);
-          if (c) arma(r, c, d1, d2);
+          const c = await pideCadena(sinCadena[i].it, 1);
+          if (c) arma(sinCadena[i], c, d1, d2);
+          progreso('Repasando', i + 1, sinCadena.length);
         }
       }
       if (cancel) return;
@@ -4287,6 +4317,14 @@ function partesFecha(f) {
       #sa-panel .sa-i.sa-err{color:#C60C0E}
       #sa-panel .sa-i[hidden]{display:none}
       #sa-panel .sa-st{font-size:10px;line-height:1.3;color:#706F6F;min-height:13px;margin-top:3px;word-break:break-word}
+      #sa-panel .sa-prog{margin-top:3px}
+      #sa-panel .sa-prog[hidden]{display:none}
+      #sa-panel .sa-plabel{font-size:10px;line-height:1.3;color:#706F6F;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      #sa-panel .sa-track{height:6px;margin-top:2px;background:#e5e5e5;overflow:hidden}
+      #sa-panel .sa-fill{display:block;height:100%;width:0;background:#2EA836;transition:width .15s linear}
+      #sa-panel .sa-prog.indet .sa-fill{width:30%;animation:sa-indet 1.1s linear infinite}
+      @keyframes sa-indet{from{margin-left:-30%}to{margin-left:100%}}
+      @media (prefers-reduced-motion:reduce){#sa-panel .sa-prog.indet .sa-fill{animation:none;width:100%;opacity:.4}}
       #sa-tip{position:fixed;z-index:2147483647;display:none;pointer-events:none;background:#fff;color:#333;border:1px solid #706F6F;border-radius:0;padding:4px 6px;font:10px/1.35 var(--ui-font);max-width:290px}
       #sa-tip .k{color:#706F6F}
       #sa-prev{position:fixed;left:16px;top:50%;width:50vw;max-width:900px;height:78vh;z-index:2147482000;display:none;flex-direction:column;background:var(--ui-bg);color:var(--ui-fg);border:1px solid var(--ui-border-strong);font:400 12px/1.4 var(--ui-font);transform:translateY(-50%)}
@@ -4329,6 +4367,10 @@ function partesFecha(f) {
         <span id="sa-count" class="sa-cuenta">0 acuses · 0 seleccionados</span>
       </div>
       <div id="sa-lista" class="sa-lista" tabindex="0" role="listbox" aria-multiselectable="true" aria-label="Acuses"></div>
+      <div id="sa-prog" class="sa-prog" hidden>
+        <div id="sa-prog-txt" class="sa-plabel"></div>
+        <div class="sa-track"><i id="sa-prog-fill" class="sa-fill"></i></div>
+      </div>
       <div id="sa-st" class="sa-st" role="status"></div>`;
     ET.ui.tab('acuses', 'Acuses', 30, 300).appendChild(panel);
 

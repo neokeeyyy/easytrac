@@ -204,3 +204,12 @@ test('nombreDeEstacion sale del mapeo LP y no de la razon social', function () {
     ET.traspasos = antesTr;
   }
 });
+
+test('avance calcula el porcentaje y marca indeterminado sin total', function () {
+  assert.deepEqual(api.avance(0, 0), { pct: 0, indet: true });
+  assert.deepEqual(api.avance(3, 0), { pct: 0, indet: true });
+  assert.deepEqual(api.avance(0, 20), { pct: 0, indet: false });
+  assert.deepEqual(api.avance(5, 20), { pct: 25, indet: false });
+  assert.deepEqual(api.avance(20, 20), { pct: 100, indet: false });
+  assert.deepEqual(api.avance(30, 20), { pct: 100, indet: false });
+});
