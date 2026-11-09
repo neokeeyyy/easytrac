@@ -6,7 +6,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.0'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.1'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -6480,7 +6480,9 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
       if (isNaN(d)) throw new Error('Fecha u hora inválida');
       var fTxt = fechaTxt(d), hTxt = horaLocal(d);
       decir('Consultando los precios del permiso…');
-      var j = await listasPrecios(fechaLocal(d) + ' ' + hTxt + ':00');
+      var fRegistro = document.getElementById('idFechaRegistro');
+       var fechaConsulta = fRegistro && fRegistro.value ? fRegistro.value : (fechaLocal(new Date()) + ' ' + horaLocal(new Date()) + ':00');
+       var j = await listasPrecios(fechaConsulta);
       var respetar = document.getElementById('cne-skip').checked;
       var ok = 0, sin = 0, sinCampo = 0;
       var faltan = new Set();
