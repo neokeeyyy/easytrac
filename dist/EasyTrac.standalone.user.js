@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.1
+// @version      1.1.2
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.1'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.2'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -6529,15 +6529,15 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
           if (!p) { sin++; faltan.add(estado + ' / ' + muni); continue; }
           var tr = buscarFila(dom, estado, muni, idx.loc >= 0 ? row.localidad : '');
           if (!tr) { sinCampo++; continue; }
-          var inp = tr.querySelector('input[id^="PrecioNuevo-"], input[name^="PrecioNuevo"], input[id*="PrecioNuevo"]');
-          if (!inp && row.idPrecio != null) inp = document.getElementById('PrecioNuevo-' + row.idPrecio);
+          var inp = row.idPrecio != null ? document.getElementById('PrecioNuevo-' + row.idPrecio) : null;
+          if (!inp) inp = tr.querySelector('input[id^="PrecioNuevo-"]');
           if (!inp) { sinCampo++; continue; }
           if (respetar && inp.value && num(inp.value) > 0) continue;
           setVal(inp, (L.modo === 'kg' ? p.kg : p.litro).toFixed(2));
-          var f = tr.querySelector('input[id^="FechaNueva-"], input[name^="FechaNueva"]')
-            || (row.idPrecio != null ? document.getElementById('FechaNueva-' + row.idPrecio) : null);
-          var h = tr.querySelector('input[id^="HoraNueva-"], input[name^="HoraNueva"]')
-            || (row.idPrecio != null ? document.getElementById('HoraNueva-' + row.idPrecio) : null);
+          var f = (row.idPrecio != null ? document.getElementById('FechaNueva-' + row.idPrecio) : null)
+            || tr.querySelector('input[id^="FechaNueva-"]');
+          var h = (row.idPrecio != null ? document.getElementById('HoraNueva-' + row.idPrecio) : null)
+            || tr.querySelector('input[id^="HoraNueva-"]');
           if (f) setVal(f, fTxt);
           if (h) setVal(h, hTxt);
           ok++;
