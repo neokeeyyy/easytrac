@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.37
+// @version      1.0.38
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.0.37'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.0.38'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}

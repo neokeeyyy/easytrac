@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.0.37
+// @version      1.0.38
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -16,22 +16,22 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // @require      https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/01-core.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/02-store.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/03-http.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/04-dates.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/05-text.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/06-permisos.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/10-ui-tokens.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/11-ui-sidebar.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/12-ui-notice.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/13-ui-grid.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/14-ui-config.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/20-acs.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/30-acuses.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/40-venta.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/50-fecha.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/60-precios-cne.js
-// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/70-traspasos.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/01-core.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/02-store.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/03-http.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/04-dates.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/05-text.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/06-permisos.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/10-ui-tokens.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/11-ui-sidebar.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/12-ui-notice.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/13-ui-grid.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/14-ui-config.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/20-acs.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/30-acuses.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/40-venta.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/50-fecha.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/60-precios-cne.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.38/src/70-traspasos.js
 // ==/UserScript==
-if (typeof EasyTrac !== 'undefined') EasyTrac.version = '1.0.37';
+if (typeof EasyTrac !== 'undefined') EasyTrac.version = '1.0.38';
