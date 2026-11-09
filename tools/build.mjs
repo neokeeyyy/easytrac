@@ -26,6 +26,7 @@ const MODULES = [
   '30-acuses.js',
   '40-venta.js',
   '50-fecha.js',
+  '60-precios-cne.js',
   '70-traspasos.js',
 ];
 
@@ -33,6 +34,7 @@ const LIBS = [
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
 ];
 
 function header(requires) {
@@ -41,11 +43,12 @@ function header(requires) {
     '// @name         EasyTRAC',
     '// @namespace    easytrac',
     '// @version      ' + VERSION,
-    '// @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.',
+    '// @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.',
     '// @author       ojuel',
     '// @match        https://siretrac.cne.gob.mx/*',
     '// @match        http://siretrac.cne.gob.mx/*',
-    '// @grant        none',
+    '// @grant        GM_xmlhttpRequest',
+    '// @connect      www.gob.mx',
     '// @run-at       document-idle',
     '// @noframes',
     '// @updateURL    ' + RAW,

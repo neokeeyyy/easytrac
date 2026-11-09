@@ -2,11 +2,12 @@
 // @name         EasyTRAC
 // @namespace    easytrac
 // @version      1.0.37
-// @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha y traspasos.
+// @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
 // @match        http://siretrac.cne.gob.mx/*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      www.gob.mx
 // @run-at       document-idle
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/neokeeyyy/easytrac/main/EasyTrac.user.js
@@ -14,6 +15,7 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // @require      https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js
+// @require      https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js
 // @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/01-core.js
 // @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/02-store.js
 // @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/03-http.js
@@ -29,6 +31,7 @@
 // @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/30-acuses.js
 // @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/40-venta.js
 // @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/50-fecha.js
+// @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/60-precios-cne.js
 // @require      https://cdn.jsdelivr.net/gh/neokeeyyy/easytrac@v1.0.37/src/70-traspasos.js
 // ==/UserScript==
 if (typeof EasyTrac !== 'undefined') EasyTrac.version = '1.0.37';
