@@ -7,9 +7,11 @@
   var ART = 'https://www.gob.mx/cne/articulos/precios-maximos-de-gas-lp-399035';
   var WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   var MES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
-  var TABS = [
-    { tabla: 'idtblPreciosNuevosAutotanque', modo: 'litro', fecha: 'idFechaPrecioNuevoAll', hora: 'idHorasMinutosNuevoAll' },
-    { tabla: 'idtblPreciosNuevosRecipiente', modo: 'kg', fecha: 'idFechaPrecioNuevoAllRecipiente', hora: 'idHorasMinutosNuevoAllRecipiente' }
+  var LISTAS = [
+    { lista: 'listaPreciosVigentesAutoTanque', tabla: 'idtblPreciosNuevosAutotanque', modo: 'litro', fecha: 'idFechaPrecioNuevoAll', hora: 'idHorasMinutosNuevoAll' },
+    { lista: 'listaPreciosXaplicarAutoTanque', tabla: 'idtblPreciosXaplicarAutoTanque', modo: 'litro', fecha: 'idFechaPrecioNuevoAll', hora: 'idHorasMinutosNuevoAll' },
+    { lista: 'listaPreciosVigentesRecipiente', tabla: 'idtblPreciosNuevosRecipiente', modo: 'kg', fecha: 'idFechaPrecioNuevoAllRecipiente', hora: 'idHorasMinutosNuevoAllRecipiente' },
+    { lista: 'listaPreciosXaplicarRecipiente', tabla: 'idtblPreciosXaplicarRecipiente', modo: 'kg', fecha: 'idFechaPrecioNuevoAllRecipiente', hora: 'idHorasMinutosNuevoAllRecipiente' }
   ];
 
   // ---------- funciones puras (probadas en test/precios-cne.test.js) ----------
@@ -111,7 +113,9 @@
   function fechaLocal(d) { return d.getFullYear() + '-' + dos(d.getMonth() + 1) + '-' + dos(d.getDate()); }
   function horaLocal(d) { return dos(d.getHours()) + ':' + dos(d.getMinutes()); }
   function fechaTxt(d) { return dos(d.getDate()) + '/' + dos(d.getMonth() + 1) + '/' + d.getFullYear(); }
-  function porDefecto() { var d = new Date(Date.now() + 2 * 3600e3); d.setSeconds(0, 0); return d; }
+  var MINUTO_MINIMO = 60; // la pantalla exige al menos 60 min de diferencia
+var MARGEN_MIN = 10;    // margen de seguridad: 1 h 10 min en total
+function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MIN) * 60e3); d.setSeconds(0, 0); return d; }
 
   // ---------- red ----------
 
@@ -136,6 +140,19 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return tipo === 'arraybuffer' ? r.arrayBuffer() : r.text();
     });
+  }
+
+  async function listasPrecios(fecha) {
+    var r = await fetch('/GasLP/Precios/GetListaPreciosXpermiso', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'fecha=' + encodeURIComponent(fecha),
+      credentials: 'include'
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var j = await r.json();
+    if (!j || !j.success) throw new Error((j && j.message) || 'La respuesta no trae success');
+    return j;
   }
 
   async function urlPdf() {
@@ -191,6 +208,29 @@
     return (inp ? inp.value : td.textContent).replace(/\s+/g, ' ').trim();
   }
 
+  function filasDom(tabla, idx) {
+    var trs = tabla.querySelectorAll('tbody tr');
+    var m = new Map();
+    for (var i = 0; i < trs.length; i++) {
+      var tr = trs[i];
+      var e = texto(tr, idx.estado), mu = texto(tr, idx.muni), lo = idx.loc >= 0 ? texto(tr, idx.loc) : '';
+      if (!e || !mu) continue;
+      var par = clave(e, mu);
+      if (!m.has(par)) m.set(par, tr);
+      if (lo) m.set(par + '|' + norm(lo), tr);
+    }
+    return m;
+  }
+
+  function buscarFila(m, estado, muni, loc) {
+    var par = clave(estado, muni);
+    if (loc) {
+      var tr = m.get(par + '|' + norm(loc));
+      if (tr) return tr;
+    }
+    return m.get(par) || null;
+  }
+
   function setVal(inp, v) {
     inp.value = v;
     inp.dispatchEvent(new Event('input', { bubbles: true }));
@@ -226,32 +266,44 @@
       var d = new Date(fInp.value + 'T' + hInp.value + ':00');
       if (isNaN(d)) throw new Error('Fecha u hora inválida');
       var fTxt = fechaTxt(d), hTxt = horaLocal(d);
+      decir('Consultando los precios del permiso…');
+      var j = await listasPrecios(fechaLocal(d) + ' ' + hTxt + ':00');
       var respetar = document.getElementById('cne-skip').checked;
       var ok = 0, sin = 0, sinCampo = 0;
       var faltan = new Set();
-      for (var ti = 0; ti < TABS.length; ti++) {
-        var t = TABS[ti];
-        var tabla = document.getElementById(t.tabla);
+      var puestos = new Set();
+      for (var li = 0; li < LISTAS.length; li++) {
+        var L = LISTAS[li];
+        var lista = j[L.lista];
+        if (!Array.isArray(lista)) continue;
+        var tabla = document.getElementById(L.tabla);
         if (!tabla) continue;
         var idx = indices(tabla);
         if (idx.estado < 0 || idx.muni < 0) { sinCampo++; continue; }
-        var fAll = document.getElementById(t.fecha), hAll = document.getElementById(t.hora);
-        if (fAll) setVal(fAll, fTxt);
-        if (hAll) setVal(hAll, hTxt);
-        var trs = tabla.querySelectorAll('tbody tr');
-        for (var ri = 0; ri < trs.length; ri++) {
-          var tr = trs[ri];
-          var estado = texto(tr, idx.estado), muni = texto(tr, idx.muni);
-          if (!estado || !muni) continue;
+        if (!puestos.has(L.modo)) {
+          puestos.add(L.modo);
+          var fAll = document.getElementById(L.fecha), hAll = document.getElementById(L.hora);
+          if (fAll) setVal(fAll, fTxt);
+          if (hAll) setVal(hAll, hTxt);
+        }
+        var dom = filasDom(tabla, idx);
+        for (var ri = 0; ri < lista.length; ri++) {
+          var row = lista[ri];
+          var estado = row.estado, muni = row.municipio;
+          if (!estado || !muni) { sinCampo++; continue; }
           var p = precioDe(mapa, estado, muni);
           if (!p) { sin++; faltan.add(estado + ' / ' + muni); continue; }
-          var precio = t.modo === 'kg' ? p.kg : p.litro;
+          var tr = buscarFila(dom, estado, muni, idx.loc >= 0 ? row.localidad : '');
+          if (!tr) { sinCampo++; continue; }
           var inp = tr.querySelector('input[id^="PrecioNuevo-"], input[name^="PrecioNuevo"], input[id*="PrecioNuevo"]');
+          if (!inp && row.idPrecio != null) inp = document.getElementById('PrecioNuevo-' + row.idPrecio);
           if (!inp) { sinCampo++; continue; }
           if (respetar && inp.value && num(inp.value) > 0) continue;
-          setVal(inp, precio.toFixed(2));
-          var f = tr.querySelector('input[id^="FechaNueva-"], input[name^="FechaNueva"]');
-          var h = tr.querySelector('input[id^="HoraNueva-"], input[name^="HoraNueva"]');
+          setVal(inp, (L.modo === 'kg' ? p.kg : p.litro).toFixed(2));
+          var f = tr.querySelector('input[id^="FechaNueva-"], input[name^="FechaNueva"]')
+            || (row.idPrecio != null ? document.getElementById('FechaNueva-' + row.idPrecio) : null);
+          var h = tr.querySelector('input[id^="HoraNueva-"], input[name^="HoraNueva"]')
+            || (row.idPrecio != null ? document.getElementById('HoraNueva-' + row.idPrecio) : null);
           if (f) setVal(f, fTxt);
           if (h) setVal(h, hTxt);
           ok++;
