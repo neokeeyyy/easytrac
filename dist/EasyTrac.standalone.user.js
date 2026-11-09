@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.2
+// @version      1.1.3
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.2'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.3'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -6470,6 +6470,80 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
     inp.dispatchEvent(new Event('blur', { bubbles: true }));
   }
 
+  function fechaUS(txt) {
+    var w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : (typeof window !== 'undefined' ? window : null);
+    if (w && typeof w.GetFechaFormatUS === 'function') { try { return w.GetFechaFormatUS(txt); } catch (e) {} }
+    var p = String(txt).split('/');
+    return p.length === 3 ? p[2] + '-' + p[1] + '-' + p[0] : txt;
+  }
+
+  function fechaHoraServidor(d) {
+    var w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : (typeof window !== 'undefined' ? window : null);
+    if (w && typeof w.GetFechaHoraBrowser === 'function') { try { return w.GetFechaHoraBrowser(1); } catch (e) {} }
+    return fechaLocal(d) + ' ' + horaLocal(d) + ':' + dos(d.getSeconds());
+  }
+
+  function formatoFecha(d) {
+    return {
+      aplicaTxt: fechaTxt(d),
+      aplicaUS: fechaUS(fechaTxt(d)),
+      hora: horaLocal(d),
+      registro: fechaHoraServidor(d)
+    };
+  }
+
+  // Arma los items de guardado de un permiso a partir de las listas vigentes.
+  function planPermiso(j, permiso, fmt, mapa) {
+    var items = [], filas = [], faltan = [], cadena = '';
+    var cuenta = { sinPrecio: 0, sinUbicacion: 0, yaPendiente: 0, igual: 0 };
+    var listas = [
+      { nombre: 'listaPreciosVigentesAutoTanque', modo: 'litro' },
+      { nombre: 'listaPreciosVigentesRecipiente', modo: 'kg' }
+    ];
+    for (var li = 0; li < listas.length; li++) {
+      var L = listas[li];
+      var lista = Array.isArray(j[L.nombre]) ? j[L.nombre] : [];
+      for (var ri = 0; ri < lista.length; ri++) {
+        var row = lista[ri];
+        if (!row.estado || !row.municipio) { cuenta.sinUbicacion++; continue; }
+        var p = precioDe(mapa, row.estado, row.municipio);
+        var nuevo = p ? (L.modo === 'kg' ? p.kg : p.litro) : null;
+        if (nuevo == null || isNaN(nuevo)) { cuenta.sinPrecio++; faltan.push(row.estado + ' / ' + row.municipio); continue; }
+        var txtNuevo = Number(nuevo).toFixed(2);
+        if (num(row.precioNuevo) > 0) { cuenta.yaPendiente++; continue; }
+        var actual = num(row.precio);
+        if (actual != null && Math.abs(actual - nuevo) < 0.005) { cuenta.igual++; continue; }
+        var item = {
+          idPrecio: row.idPrecio,
+          idPermiso: row.idPermiso ? row.idPermiso : permiso.id,
+          idEstatus: 2,
+          idEstado: row.idEstado,
+          idMunicipio: row.idMunicipio,
+          idLocalidad: row.idLocalidad,
+          fechaRegistro: fmt.registro,
+          autotanque: L.modo === 'litro',
+          recipiente: L.modo === 'kg',
+          fechaNuevoPrecio: fmt.aplicaUS,
+          horaNuevoPrecio: fmt.hora,
+          precioNuevo: txtNuevo
+        };
+        if (L.modo === 'kg') item.capacidadKg = row.capacidadKg;
+        items.push(item);
+        filas.push({ estado: row.estado, municipio: row.municipio, localidad: row.localidad, actual: row.precio, nuevo: txtNuevo, modo: L.modo });
+        if (L.modo === 'kg') {
+          cadena += '|Entidad Federativa=' + row.estado + '|Municipio=' + row.municipio + '|Localidad=' + row.localidad +
+            '|Precio vigente por Kg=' + row.precio + '|Capacidad Kg=' + row.capacidadKg +
+            '|Precio Nuevo=' + txtNuevo + '|Fecha nuevo precio=' + fmt.aplicaTxt + ' ' + fmt.hora;
+        } else {
+          cadena += '|Entidad Federativa=' + row.estado + '|Municipio=' + row.municipio + '|Localidad=' + row.localidad +
+            '|Precio vigente por litro=' + row.precio +
+            '|Precio Nuevo=' + txtNuevo + '|Fecha nuevo precio=' + fmt.aplicaTxt + ' ' + fmt.hora;
+        }
+      }
+    }
+    return { items: items, filas: filas, cadena: cadena, faltan: faltan, cuenta: cuenta };
+  }
+
   // ---------- interfaz ----------
 
   var cargando = false;
@@ -6579,13 +6653,220 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
     document.getElementById('cne-run').addEventListener('click', llenar);
   }
 
+  // ---------- bulk desde el selector de permisos ----------
+
+  var bulkCargando = false;
+  var bulkPlanes = [];
+  var bulkMapa = null;
+  var bulkVisto = 0;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function esPlanta(p) {
+    var act = norm(p.actividad || '');
+    var mat = norm(p.materia || '');
+    var cod = norm(p.nombre || '');
+    if (/ESTACION|EXPENDIO/.test(act) || /ESTACION|EXPENDIO/.test(cod)) return false;
+    var gas = mat.indexOf('GAS') >= 0 || /(^|\/)LP(\/|$)/.test(cod);
+    var planta = (act.indexOf('DISTRIBUCION') >= 0 && act.indexOf('PLANTA') >= 0) || (cod.indexOf('DIST') >= 0 && cod.indexOf('PLA') >= 0);
+    return gas && planta;
+  }
+
+  function permisoActivo() {
+    var el = document.getElementById('codigoregistro');
+    if (el && el.value) return el.value.trim();
+    var n = document.querySelector('.navbar-custom-menu .hidden-xss');
+    return n ? n.textContent.trim() : '';
+  }
+
+  async function activaPermiso(p) {
+    var qs = new URLSearchParams({
+      idPermiso: p.id,
+      permiso: p.nombre || '',
+      idPermisionario: '0',
+      idPermisoMateria: '0',
+      idPermisoActividad: '0',
+      razonSocial: p.razon || '',
+      estatus: 'False',
+      capacidadOperativa: '0'
+    });
+    var r = await fetch('/OrdenDePedido/SeleccionarPermiso?' + qs, { credentials: 'include' });
+    if (!r.ok) throw new Error('No se pudo activar ' + (p.nombre || p.id) + ' (HTTP ' + r.status + ')');
+  }
+
+  async function listaPermisos() {
+    var lista = ET.core.permisos.permisosDeDocumento(document);
+    if (!lista.length) {
+      var html = await (await fetch('/OrdenDePedido/Permisos', { credentials: 'include' })).text();
+      lista = ET.core.permisos.permisosDeDocumento(new DOMParser().parseFromString(html, 'text/html'));
+    }
+    return lista;
+  }
+
+  function decirBulk(t, err) {
+    var m = document.getElementById('cne-bulk-msg');
+    if (!m) return;
+    m.textContent = t;
+    m.style.color = err ? '#C60C0E' : '#706F6F';
+  }
+
+  function renderBulk(fmt) {
+    var box = document.getElementById('cne-bulk-list');
+    if (!box) return;
+    var total = bulkPlanes.reduce(function (n, x) { return n + x.plan.items.length; }, 0);
+    var html = '<table style="width:100%;border-collapse:collapse;font-size:11px">' +
+      '<thead><tr><th style="text-align:left;border-bottom:1px solid #ccc">Permiso</th>' +
+      '<th style="text-align:right;border-bottom:1px solid #ccc">Filas</th>' +
+      '<th style="text-align:left;border-bottom:1px solid #ccc">Detalle</th></tr></thead><tbody>';
+    bulkPlanes.forEach(function (x) {
+      var p = x.permiso, plan = x.plan;
+      var det = plan.filas.slice(0, 4).map(function (f) {
+        return esc(f.municipio) + ' ' + esc(f.nuevo) + (f.modo === 'kg' ? ' kg' : ' L');
+      }).join('<br>');
+      if (plan.filas.length > 4) det += '<br>… +' + (plan.filas.length - 4);
+      if (!plan.items.length) {
+        var motivos = [];
+        if (plan.cuenta.sinPrecio) motivos.push(plan.cuenta.sinPrecio + ' sin precio');
+        if (plan.cuenta.sinUbicacion) motivos.push(plan.cuenta.sinUbicacion + ' sin ubicación');
+        det = 'Sin cambios' + (motivos.length ? ' · ' + motivos.join(' · ') : '');
+      } else {
+        var extra = [];
+        if (plan.cuenta.yaPendiente) extra.push(plan.cuenta.yaPendiente + ' ya por aplicar');
+        if (plan.cuenta.igual) extra.push(plan.cuenta.igual + ' igual');
+        if (plan.cuenta.sinUbicacion) extra.push(plan.cuenta.sinUbicacion + ' sin ubicación');
+        if (extra.length) det += '<br><span style="color:#706F6F">' + extra.join(' · ') + '</span>';
+      }
+      html += '<tr><td style="padding:2px 0;border-bottom:1px solid #eee">' + esc(p.nombre) + '</td>' +
+        '<td style="text-align:right;border-bottom:1px solid #eee">' + plan.items.length + '</td>' +
+        '<td style="border-bottom:1px solid #eee">' + det + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    if (!bulkPlanes.length) html = '<div style="font-size:12px">No hay permisos de Distribución/Planta.</div>';
+    box.innerHTML = html;
+    var btn = document.getElementById('cne-bulk-send');
+    if (btn) btn.style.display = total ? 'block' : 'none';
+    decirBulk('Revisados ' + bulkPlanes.length + ' permisos · ' + total + ' precios · ' + fmt.aplicaTxt + ' ' + fmt.hora);
+  }
+
+  async function revisarBulk() {
+    if (bulkCargando) return;
+    var btn = document.getElementById('cne-bulk-run');
+    bulkCargando = true;
+    if (btn) btn.disabled = true;
+    bulkPlanes = [];
+    try {
+      decirBulk('Leyendo el PDF de la CNE…');
+      var r = await urlPdf();
+      var filas = await filasPdf(r.href);
+      if (!filas.length) throw new Error('El PDF no devolvió filas con precio');
+      bulkMapa = mapaCne(filas);
+      var todos = await listaPermisos();
+      var permisos = todos.filter(esPlanta);
+      if (!permisos.length) throw new Error('No hay permisos de Distribución/Planta en la tabla');
+      var origen = permisoActivo();
+      var fmt = formatoFecha(porDefecto());
+      var ahora = new Date();
+      var consulta = fechaTxt(ahora) + ' ' + horaLocal(ahora) + ':' + dos(ahora.getSeconds());
+      try {
+        for (var i = 0; i < permisos.length; i++) {
+          var p = permisos[i];
+          decirBulk('Revisando ' + (p.nombre || p.id) + ' (' + (i + 1) + '/' + permisos.length + ')…');
+          await activaPermiso(p);
+          var j = await listasPrecios(consulta);
+          bulkPlanes.push({ permiso: p, plan: planPermiso(j, p, fmt, bulkMapa) });
+        }
+      } finally {
+        var back = todos.find(function (x) { return x.nombre === origen; });
+        if (back) { try { await activaPermiso(back); } catch (e) { console.error(e); } }
+      }
+      renderBulk(fmt);
+      bulkVisto = Date.now();
+    } catch (e) {
+      decirBulk('Error: ' + e.message, true);
+      console.error(e);
+    } finally {
+      bulkCargando = false;
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function enviarBulk() {
+    if (bulkCargando) return;
+    var total = bulkPlanes.reduce(function (n, x) { return n + x.plan.items.length; }, 0);
+    if (!total) return;
+    if (Date.now() - bulkVisto > 30 * 60e3) { decirBulk('La revisión tiene más de 30 min; vuelve a revisar.', true); return; }
+    var fmt = formatoFecha(porDefecto());
+    if (!confirm('¿Enviar ' + total + ' precios a ' + bulkPlanes.length + ' permisos a las ' + fmt.aplicaTxt + ' ' + fmt.hora + '? No se pueden modificar después.')) return;
+    var btn = document.getElementById('cne-bulk-send');
+    bulkCargando = true;
+    if (btn) btn.disabled = true;
+    var ahora = new Date();
+    var consulta = fechaTxt(ahora) + ' ' + horaLocal(ahora) + ':' + dos(ahora.getSeconds());
+    var todos = [], origen = '';
+    var okPerm = 0, okFilas = 0, fallos = [];
+    try {
+      todos = await listaPermisos();
+      origen = permisoActivo();
+      for (var i = 0; i < bulkPlanes.length; i++) {
+        var p = bulkPlanes[i].permiso;
+        decirBulk('Enviando ' + (p.nombre || p.id) + ' (' + (i + 1) + '/' + bulkPlanes.length + ')…');
+        try {
+          await activaPermiso(p);
+          var j = await listasPrecios(consulta);
+          var plan = planPermiso(j, p, fmt, bulkMapa);
+          if (!plan.items.length) { fallos.push((p.nombre || p.id) + ': sin cambios'); continue; }
+          var res = await fetch('/GasLP/Precios/InsertaPreciosNuevos2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+            body: 'datos=' + encodeURIComponent(JSON.stringify(plan.items)) + '&cadenaAcuse=' + encodeURIComponent(plan.cadena),
+            credentials: 'include'
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var out = await res.json();
+          if (!out || !out.success) throw new Error((out && out.mensaje) || 'sin success');
+          okPerm++;
+          okFilas += plan.items.length;
+        } catch (e) {
+          fallos.push((p.nombre || p.id) + ': ' + e.message);
+        }
+      }
+    } catch (e) {
+      decirBulk('Error: ' + e.message, true);
+      console.error(e);
+    } finally {
+      var back = todos.find(function (x) { return x.nombre === origen; });
+      if (back) { try { await activaPermiso(back); } catch (e) { console.error(e); } }
+      bulkCargando = false;
+      if (btn) btn.disabled = false;
+    }
+    decirBulk('Enviado: ' + okPerm + ' permisos · ' + okFilas + ' precios' + (fallos.length ? ' · fallos: ' + fallos.join('; ') : ''), fallos.length > 0);
+    console.log('CNE bulk', { okPerm: okPerm, okFilas: okFilas, fallos: fallos });
+  }
+
+  function iniciarBulk() {
+    if (typeof document === 'undefined' || !/\/OrdenDePedido\/Permisos/i.test(location.href)) return;
+    if (document.getElementById('cne-bulk-run')) return;
+    var panel = ET.ui.tab('precios-cne-bulk', 'Precios CNE', 61, 340);
+    panel.innerHTML =
+      '<div style="font-size:12px;color:#706F6F;padding:2px 0">Actualiza todos los permisos de Distribución/Planta con la CNE.</div>' +
+      '<button id="cne-bulk-run" type="button" style="width:100%;border:0;background:#2EA836;color:#fff;padding:6px 14px;font:inherit;cursor:pointer;margin:4px 0">Revisar plantas</button>' +
+      '<div id="cne-bulk-msg" style="color:#706F6F;font-size:12px">Listo para revisar.</div>' +
+      '<div id="cne-bulk-list" style="margin-top:6px"></div>' +
+      '<button id="cne-bulk-send" type="button" style="display:none;width:100%;border:0;background:#C60C0E;color:#fff;padding:6px 14px;font:inherit;cursor:pointer;margin:6px 0">Confirmar y enviar</button>';
+    document.getElementById('cne-bulk-run').addEventListener('click', revisarBulk);
+    document.getElementById('cne-bulk-send').addEventListener('click', enviarBulk);
+  }
+
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { norm: norm, estadoKey: estadoKey, muniKey: muniKey, clave: clave, num: num, parseCneItems: parseCneItems, mapaCne: mapaCne, precioDe: precioDe, fechaPdf: fechaPdf };
+    module.exports = { norm: norm, estadoKey: estadoKey, muniKey: muniKey, clave: clave, num: num, parseCneItems: parseCneItems, mapaCne: mapaCne, precioDe: precioDe, fechaPdf: fechaPdf, planPermiso: planPermiso };
   }
 
   if (typeof document !== 'undefined') {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);
-    else iniciar();
+    var arranque = function () { iniciar(); iniciarBulk(); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', arranque);
+    else arranque();
   }
 })();
 

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const api = require('../src/60-precios-cne.js');
-const { norm, estadoKey, muniKey, clave, num, parseCneItems, mapaCne, precioDe, fechaPdf } = api;
+const { norm, estadoKey, muniKey, clave, num, parseCneItems, mapaCne, precioDe, fechaPdf, planPermiso } = api;
 
 const item = (str, x, y) => ({ str, transform: [1, 0, 0, 1, x, y] });
 
@@ -84,4 +84,58 @@ test('fechaPdf lee el rango del PDF', () => {
   assert.equal(f.getMonth(), 10);
   assert.equal(f.getDate(), 8);
   assert.equal(fechaPdf('', ''), null);
+});
+
+test('planPermiso arma items de auto-tanque y recipiente con precio CNE', () => {
+  const mapa = new Map([[clave('Jalisco', 'Ojuelos de Jalisco'), { kg: 21.84, litro: 11.79 }]]);
+  const fmt = { aplicaTxt: '09/11/2026', aplicaUS: '2026-11-09', hora: '14:10', registro: '2026-11-09 13:00:00' };
+  const permiso = { id: 10, nombre: 'LP/1/DIST/PLA/2016' };
+  const j = {
+    listaPreciosVigentesAutoTanque: [{
+      idPrecio: 100, idPermiso: 0, estado: 'Jalisco', municipio: 'Ojuelos de Jalisco',
+      localidad: 'Ojuelos de Jalisco', idEstado: 14, idMunicipio: 62, idLocalidad: 1,
+      precio: '11.09', precioNuevo: ''
+    }],
+    listaPreciosVigentesRecipiente: [{
+      idPrecio: 101, idPermiso: 10, estado: 'Jalisco', municipio: 'Ojuelos de Jalisco',
+      localidad: 'Ojuelos de Jalisco', idEstado: 14, idMunicipio: 62, idLocalidad: 1,
+      capacidadKg: 45, precio: '20.00', precioNuevo: ''
+    }]
+  };
+
+  const plan = planPermiso(j, permiso, fmt, mapa);
+
+  assert.equal(plan.items.length, 2);
+  assert.deepEqual(plan.items[0], {
+    idPrecio: 100, idPermiso: 10, idEstatus: 2, idEstado: 14, idMunicipio: 62, idLocalidad: 1,
+    fechaRegistro: '2026-11-09 13:00:00', autotanque: true, recipiente: false,
+    fechaNuevoPrecio: '2026-11-09', horaNuevoPrecio: '14:10', precioNuevo: '11.79'
+  });
+  assert.equal(plan.items[1].precioNuevo, '21.84');
+  assert.equal(plan.items[1].autotanque, false);
+  assert.equal(plan.items[1].recipiente, true);
+  assert.equal(plan.items[1].capacidadKg, 45);
+  assert.match(plan.cadena, /Precio vigente por litro=11\.09/);
+  assert.match(plan.cadena, /Precio vigente por Kg=20\.00\|Capacidad Kg=45/);
+  assert.equal(plan.cuenta.sinPrecio, 0);
+});
+
+test('planPermiso omite filas sin ubicación, sin precio, ya pendientes o iguales', () => {
+  const mapa = new Map([[clave('Jalisco', 'Ojuelos de Jalisco'), { kg: 21.84, litro: 11.79 }]]);
+  const fmt = { aplicaTxt: '09/11/2026', aplicaUS: '2026-11-09', hora: '14:10', registro: '2026-11-09 13:00:00' };
+  const permiso = { id: 10, nombre: 'LP/1/DIST/PLA/2016' };
+  const j = {
+    listaPreciosVigentesAutoTanque: [
+      { idPrecio: 1, estado: '', municipio: 'X', precio: '1.00' },
+      { idPrecio: 2, estado: 'Jalisco', municipio: 'Desconocido', precio: '1.00' },
+      { idPrecio: 3, estado: 'Jalisco', municipio: 'Ojuelos de Jalisco', precio: '11.00', precioNuevo: '12.00' },
+      { idPrecio: 4, estado: 'Jalisco', municipio: 'Ojuelos de Jalisco', precio: '11.79', precioNuevo: '' }
+    ]
+  };
+
+  const plan = planPermiso(j, permiso, fmt, mapa);
+
+  assert.equal(plan.items.length, 0);
+  assert.deepEqual(plan.cuenta, { sinPrecio: 1, sinUbicacion: 1, yaPendiente: 1, igual: 1 });
+  assert.deepEqual(plan.faltan, ['Jalisco / Desconocido']);
 });
