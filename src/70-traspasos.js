@@ -1625,7 +1625,7 @@
     switchTab('envio');
     ui.sendStatus.textContent =
       state.transfers.length +
-      ' traspaso(s) generados. Usa Simular para revisar el cuerpo del POST.';
+      ' traspaso(s) generados. Usa Simular para revisarlos antes de enviar.';
   }
 
   // ---------------------------------------------------------------------------
@@ -1729,13 +1729,6 @@
       );
       return;
     }
-    ui.configWarning.append(
-      el(
-        'div',
-        'st-note',
-        'Envío: POST directo a GuardaCompraGasLP con el permiso origen. Acuses: GetRegistrosCompras con estatus -1.'
-      )
-    );
   }
 
   function updateSendButtons() {

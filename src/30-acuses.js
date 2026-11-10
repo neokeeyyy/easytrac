@@ -578,7 +578,8 @@ function partesFecha(f) {
       let ultimo = 'no se pudo obtener el PDF';
       for (let i = 0; i < 3; i++) {
         try {
-          const r = await post('/GasLP/Administracion/ImprimirAcuse', { idAcuse: it.idAcuse }, 0);
+          // El acuse va en la query, como el botón de SIRETRAC: por body devuelve HTML.
+          const r = await post('/GasLP/Administracion/ImprimirAcuse?idAcuse=' + encodeURIComponent(it.idAcuse), null, 0);
           const b = new Uint8Array(await r.arrayBuffer());
           if (esPdf(b)) return b;
           ultimo = 'el servidor devolvió algo que no es un PDF';
@@ -1129,6 +1130,11 @@ function partesFecha(f) {
       }
 
       const head = FIJAS.concat([...extras]);
+      if (!rows.length) {
+        const motivo = [...new Set(inc.map(r => r.pdfError).filter(Boolean))].slice(0, 2).join(' · ');
+        st('No se pudo bajar ningún PDF' + (motivo ? ': ' + motivo : ''));
+        return;
+      }
       const csv = [head.map(q).join(',')].concat(rows.map(row =>
         head.map(k => q(Object.prototype.hasOwnProperty.call(row, k) ? row[k] : (row.extra && row.extra[k]) || '')).join(','))).join('\r\n');
       zip.file('acuses.csv', '\ufeff' + csv);

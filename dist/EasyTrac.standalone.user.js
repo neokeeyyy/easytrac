@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.12
+// @version      1.1.13
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.12'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.13'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -3744,7 +3744,8 @@ function partesFecha(f) {
       let ultimo = 'no se pudo obtener el PDF';
       for (let i = 0; i < 3; i++) {
         try {
-          const r = await post('/GasLP/Administracion/ImprimirAcuse', { idAcuse: it.idAcuse }, 0);
+          // El acuse va en la query, como el botón de SIRETRAC: por body devuelve HTML.
+          const r = await post('/GasLP/Administracion/ImprimirAcuse?idAcuse=' + encodeURIComponent(it.idAcuse), null, 0);
           const b = new Uint8Array(await r.arrayBuffer());
           if (esPdf(b)) return b;
           ultimo = 'el servidor devolvió algo que no es un PDF';
@@ -4295,6 +4296,11 @@ function partesFecha(f) {
       }
 
       const head = FIJAS.concat([...extras]);
+      if (!rows.length) {
+        const motivo = [...new Set(inc.map(r => r.pdfError).filter(Boolean))].slice(0, 2).join(' · ');
+        st('No se pudo bajar ningún PDF' + (motivo ? ': ' + motivo : ''));
+        return;
+      }
       const csv = [head.map(q).join(',')].concat(rows.map(row =>
         head.map(k => q(Object.prototype.hasOwnProperty.call(row, k) ? row[k] : (row.extra && row.extra[k]) || '')).join(','))).join('\r\n');
       zip.file('acuses.csv', '\ufeff' + csv);
@@ -8912,7 +8918,7 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
     switchTab('envio');
     ui.sendStatus.textContent =
       state.transfers.length +
-      ' traspaso(s) generados. Usa Simular para revisar el cuerpo del POST.';
+      ' traspaso(s) generados. Usa Simular para revisarlos antes de enviar.';
   }
 
   // ---------------------------------------------------------------------------
@@ -9016,13 +9022,6 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
       );
       return;
     }
-    ui.configWarning.append(
-      el(
-        'div',
-        'st-note',
-        'Envío: POST directo a GuardaCompraGasLP con el permiso origen. Acuses: GetRegistrosCompras con estatus -1.'
-      )
-    );
   }
 
   function updateSendButtons() {
