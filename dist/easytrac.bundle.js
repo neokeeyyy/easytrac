@@ -6,7 +6,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.11'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.12'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -4400,46 +4400,41 @@ function partesFecha(f) {
       if (cancel) { st('Cancelado'); return; }
 
       const ests = estacionesDe(inc);
-      const portadas = await PDFLib.PDFDocument.create();
-      const acuses = await PDFLib.PDFDocument.create();
-      const A4 = PDFLib.PageSizes.A4;
-      const f = await portadas.embedFont(PDFLib.StandardFonts.Helvetica);
-      const fb = await portadas.embedFont(PDFLib.StandardFonts.HelveticaBold);
+      const doc = await PDFLib.PDFDocument.create();
+      const f = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+      const fb = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
       let nAcuses = 0, saltados = 0;
 
       for (const { perm, filas: grupo } of ests) {
         st('Uniendo ' + perm + '…');
-        portada(portadas, { f, fb }, perm, grupo);
-        anexoCodigos(portadas, { f, fb }, perm, grupo);
 
-        const paginas = [];
-        let unidos = 0;
+        // Se cargan primero los PDFs del grupo: si ninguno se puede leer no se
+        // añade su portada, para no dejar secciones sin acuses.
+        const srcs = [];
         for (const r of grupo) {
           const bytes = pdfCache.get(r.it.idAcuse);
           if (!bytes) { saltados++; continue; }
           try {
             const src = await PDFLib.PDFDocument.load(bytes);
-            paginas.push(...await acuses.copyPages(src, src.getPageIndices()));
-            unidos++;
+            srcs.push(src);
           } catch (e) { saltados++; r.pdfError = 'PDF ilegible: ' + e.message; }
         }
-        if (!paginas.length) continue;
-        // Hoja en blanco entre permisos para poder separar los acuses al imprimir.
-        if (acuses.getPageCount()) acuses.addPage(A4);
-        paginas.forEach(pg => acuses.addPage(pg));
-        nAcuses += unidos;
+        if (!srcs.length) continue;
+
+        // La portada de cada permiso queda delante de sus respectivos acuses.
+        portada(doc, { f, fb }, perm, grupo);
+        anexoCodigos(doc, { f, fb }, perm, grupo);
+
+        for (const src of srcs) {
+          const paginas = await doc.copyPages(src, src.getPageIndices());
+          paginas.forEach(pg => doc.addPage(pg));
+          nAcuses += paginas.length;
+        }
       }
       if (!nAcuses) { st('Ningún PDF se pudo unir'); return; }
 
-      // Unimos portadas y acuses en un solo PDF: primero las portadas (con el mismo
-      // orden que el botón "Portadas") y luego los acuses.
-      const portadasPages = portadas.getPageIndices();
-      if (portadasPages.length) {
-        const copiadas = await acuses.copyPages(portadas, portadasPages);
-        for (let i = copiadas.length - 1; i >= 0; i--) acuses.insertPage(0, copiadas[i]);
-      }
-      descargar(new Blob([await acuses.save()], { type: 'application/pdf' }), 'acuses_' + rangoTag() + '.pdf');
-      st('Imprimir: ' + nAcuses + ' acuses · ' + acuses.getPageCount() + ' páginas (portadas incluidas)' +
+      descargar(new Blob([await doc.save()], { type: 'application/pdf' }), 'acuses_' + rangoTag() + '.pdf');
+      st('Imprimir: ' + nAcuses + ' acuses · ' + doc.getPageCount() + ' páginas (portada por permiso)' +
         (saltados ? ' · ' + saltados + ' sin PDF' : ''));
       } finally { descargando = false; }
     }
