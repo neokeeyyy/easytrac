@@ -65,6 +65,16 @@ test('el panel Ajustes reúne las opciones persistentes', async () => {
   const pane = doc.querySelector('.shub-pane[data-id="ajustes"]');
   expect(pane).toBeTruthy();
   expect(pane.querySelector('[data-lista="acs.vehiculos"]')).toBeTruthy();
+  /* Vehículos en tarjetas: los tres campos se editan directo, sin tabla de texto. */
+  const caja = pane.querySelector('[data-lista="acs.vehiculos"]');
+  expect(caja.querySelector('.etcfg-tabla')).toBeFalsy();
+  expect(caja.querySelectorAll('input[data-lista-campo]').length).toBe(0);
+  caja.querySelector('[data-lista-add]').click();
+  const campos = caja.querySelectorAll('input[data-lista-campo]');
+  expect(campos.length).toBe(3);
+  campos[1].value = 'ABC-123';
+  campos[1].dispatchEvent(new win.Event('change', { bubbles: true }));
+  expect(win.EasyTrac.config.vehiculos()[0].placas).toBe('ABC-123');
   expect(pane.querySelector('#cfg-acs-delay-ms')).toBeTruthy();
   expect(pane.querySelector('#cfg-acs-cerrar-al-recepcionar')).toBeTruthy();
   /* La casilla de no cerradas vive ahora en la pestaña Facturas, no en Ajustes. */

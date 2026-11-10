@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.4
+// @version      1.1.5
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.4'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.5'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -1181,7 +1181,7 @@
     return listas[c.clave];
   }
 
-  function accionesFilaHtml(c, i, st) {
+  function accionesFilaHtml(c, i, st, simple) {
     var clave = esc(c.clave);
     var fila = i + 1;
     if (st.confirmar === i) {
@@ -1191,8 +1191,8 @@
         '<button type="button" class="etcfg-boton" data-lista-no="' + clave + '" data-fila="' + i +
         '" aria-label="No eliminar la fila ' + fila + '">No</button></span>';
     }
-    return '<button type="button" class="etcfg-boton" data-lista-editar="' + clave + '" data-fila="' + i +
-      '" aria-label="Editar la fila ' + fila + '">Editar</button>' +
+    return (simple ? '' : '<button type="button" class="etcfg-boton" data-lista-editar="' + clave + '" data-fila="' + i +
+      '" aria-label="Editar la fila ' + fila + '">Editar</button>') +
       '<button type="button" class="etcfg-boton etcfg-peligro" data-lista-borrar="' + clave + '" data-fila="' + i +
       '" aria-label="Eliminar la fila ' + fila + '">Eliminar</button>';
   }
@@ -1230,11 +1230,38 @@
     return html + '</tbody></table>';
   }
 
+  /* Tarjetas: cada fila es un box con sus campos siempre editables. */
+  function tarjetasListaHtml(c) {
+    var cols = columnasLista(c);
+    var st = estadoLista(c);
+    var id = 'cfg-' + c.clave.replace(/[^a-z0-9]+/gi, '-');
+    var html = '<div class="etcfg-cards" role="group" aria-labelledby="' + id + '-lbl">';
+    if (!st.datos.length) {
+      html += '<p class="etcfg-vacio">Sin filas. Usa «Añadir».</p>';
+    }
+    st.datos.forEach(function (fila, i) {
+      html += '<div class="etcfg-card" data-fila="' + i + '"><div class="etcfg-card-campos">';
+      cols.forEach(function (col, j) {
+        var val = fila[col.clave] == null ? '' : String(fila[col.clave]);
+        html += '<label class="etcfg-card-campo"><span>' + esc(col.etiqueta || col.clave) + '</span>' +
+          '<input type="text" class="etcfg-celda-input" data-lista-campo="' + esc(c.clave) +
+          '" data-fila="' + i + '" data-col="' + j + '" aria-label="' +
+          esc((col.etiqueta || col.clave) + ', fila ' + (i + 1)) + '" value="' + esc(val) + '"></label>';
+      });
+      html += '</div><div class="etcfg-card-pie">' + accionesFilaHtml(c, i, st, true) + '</div></div>';
+    });
+    return html + '</div>';
+  }
+
+  function cuerpoLista(c) {
+    return c.modo === 'tarjetas' ? tarjetasListaHtml(c) : tablaListaHtml(c);
+  }
+
   function listaHtml(c) {
     var id = 'cfg-' + c.clave.replace(/[^a-z0-9]+/gi, '-');
     return '<span class="etcfg-lista-titulo" id="' + id + '-lbl">' + esc(c.etiqueta) + '</span>' +
       '<div class="etcfg-lista-caja" data-lista="' + esc(c.clave) + '">' +
-      tablaListaHtml(c) +
+      cuerpoLista(c) +
       '<div class="etcfg-lista-pie"><button type="button" class="etcfg-boton" data-lista-add="' + esc(c.clave) +
       '" aria-label="Añadir fila a ' + esc(c.etiqueta) + '">Añadir</button></div></div>';
   }
@@ -1244,7 +1271,7 @@
     if (!pane) return;
     var caja = pane.querySelector('[data-lista="' + c.clave + '"]');
     if (!caja) return;
-    caja.innerHTML = tablaListaHtml(c) +
+    caja.innerHTML = cuerpoLista(c) +
       '<div class="etcfg-lista-pie"><button type="button" class="etcfg-boton" data-lista-add="' + esc(c.clave) +
       '" aria-label="Añadir fila a ' + esc(c.etiqueta) + '">Añadir</button></div>';
     var el = caja.querySelector(foco || '[data-lista-add]');
@@ -1292,6 +1319,12 @@
     return 'td[data-celda][data-fila="' + f + '"][data-col="' + j + '"]';
   }
 
+  function focoLista(c, f, j) {
+    return c.modo === 'tarjetas'
+      ? 'input[data-lista-campo][data-fila="' + f + '"][data-col="' + j + '"]'
+      : focoCelda(f, j);
+  }
+
   function editarCelda(celda) {
     var c = porClave[celda.getAttribute('data-celda')];
     var st = c && estadoLista(c);
@@ -1310,9 +1343,13 @@
     var f = +el.getAttribute('data-fila');
     if (el.hasAttribute('data-lista-add')) {
       st.datos.push({});
-      st.editando = { f: st.datos.length - 1, c: 0 };
       st.confirmar = -1;
-      refrescarLista(c, '[data-lista-input]');
+      if (c.modo === 'tarjetas') {
+        refrescarLista(c, focoLista(c, st.datos.length - 1, 0));
+      } else {
+        st.editando = { f: st.datos.length - 1, c: 0 };
+        refrescarLista(c, '[data-lista-input]');
+      }
     } else if (el.hasAttribute('data-lista-editar')) {
       st.editando = { f: f, c: 0 };
       st.confirmar = -1;
@@ -1325,7 +1362,7 @@
       st.datos.splice(f, 1);
       st.confirmar = -1;
       guardarLista(c, st.datos);
-      refrescarLista(c, st.datos.length ? focoCelda(Math.min(f, st.datos.length - 1), 0) : null);
+      refrescarLista(c, st.datos.length ? focoLista(c, Math.min(f, st.datos.length - 1), 0) : null);
     } else {
       st.confirmar = -1;
       refrescarLista(c, '[data-lista-borrar][data-fila="' + f + '"]');
@@ -1395,6 +1432,18 @@
     p.id = 'etcfg-pane';
     p.addEventListener('change', function (ev) {
       var el = ev.target;
+      var listaCampo = el && el.getAttribute && el.getAttribute('data-lista-campo');
+      if (listaCampo) {
+        var c = porClave[listaCampo];
+        var st = c && estadoLista(c);
+        var f = +el.getAttribute('data-fila'), j = +el.getAttribute('data-col');
+        if (c && st) {
+          if (!st.datos[f]) st.datos[f] = {};
+          st.datos[f][columnasLista(c)[j].clave] = el.value;
+          guardarLista(c, st.datos);
+        }
+        return;
+      }
       var clave = el && el.getAttribute && el.getAttribute('data-clave');
       if (!clave) return;
       set(clave, el.type === 'checkbox' ? el.checked : el.value);
@@ -1413,6 +1462,11 @@
     p.addEventListener('keydown', function (ev) {
       var t = ev.target;
       if (!t || !t.getAttribute) return;
+      var campo = t.closest ? t.closest('[data-lista-campo]') : null;
+      if (campo) {
+        if (ev.key === 'Enter') { ev.preventDefault(); campo.blur(); }
+        return;
+      }
       var inp = t.closest ? t.closest('[data-lista-input]') : null;
       if (inp) {
         if (ev.key === 'Enter') { ev.preventDefault(); terminarCelda(inp, true); }
@@ -1498,6 +1552,13 @@
     '#etcfg-pane .etcfg-mudo{color:var(--ui-muted);}' +
     '#etcfg-pane .etcfg-vacio{text-align:center;color:var(--ui-muted);}' +
     '#etcfg-pane .etcfg-lista-pie{margin-top:6px;}' +
+    '#etcfg-pane .etcfg-cards{display:grid;gap:8px;}' +
+    '#etcfg-pane .etcfg-card{border:1px solid var(--ui-border);padding:9px 10px;background:var(--ui-bg);}' +
+    '#etcfg-pane .etcfg-card-campos{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 64px;gap:8px;align-items:end;}' +
+    '#etcfg-pane .etcfg-card-campo{display:grid;gap:3px;font-size:12px;color:var(--ui-muted);}' +
+    '#etcfg-pane .etcfg-card-campo input{font-size:13px;}' +
+    '#etcfg-pane .etcfg-card-pie{display:flex;justify-content:flex-end;margin-top:7px;}' +
+    '#etcfg-pane .etcfg-card-pie .etcfg-boton{padding:4px 8px;font-size:12px;margin:0;}' +
     '#etcfg-pane .etcfg-celda-input{width:100%;min-width:0;padding:4px 5px;border:1px solid var(--ui-focus);' +
     'background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;}' +
     '#etcfg-pane input[type=checkbox]{width:16px;height:16px;flex:0 0 auto;margin:0;accent-color:var(--ui-primary);}' +
@@ -3081,6 +3142,7 @@
       clave: 'acs.vehiculos',
       etiqueta: 'Vehículos (el ID es opcional)',
       tipo: 'lista',
+      modo: 'tarjetas',
       defecto: DEFAULTS.VEHICULOS,
       columnas: [
         { clave: 'nombre', etiqueta: 'Nombre', ancho: '30%' },

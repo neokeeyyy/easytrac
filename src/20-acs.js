@@ -1550,6 +1550,7 @@
       clave: 'acs.vehiculos',
       etiqueta: 'Vehículos (el ID es opcional)',
       tipo: 'lista',
+      modo: 'tarjetas',
       defecto: DEFAULTS.VEHICULOS,
       columnas: [
         { clave: 'nombre', etiqueta: 'Nombre', ancho: '30%' },
