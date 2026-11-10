@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.13
+// @version      1.1.14
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.13'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.14'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -3744,11 +3744,17 @@ function partesFecha(f) {
       let ultimo = 'no se pudo obtener el PDF';
       for (let i = 0; i < 3; i++) {
         try {
-          // El acuse va en la query, como el botón de SIRETRAC: por body devuelve HTML.
-          const r = await post('/GasLP/Administracion/ImprimirAcuse?idAcuse=' + encodeURIComponent(it.idAcuse), null, 0);
+          // El id va en el cuerpo, como el formulario de SIRETRAC (SendMethodPost).
+          const r = await post('/GasLP/Administracion/ImprimirAcuse', { idAcuse: it.idAcuse }, 0);
           const b = new Uint8Array(await r.arrayBuffer());
           if (esPdf(b)) return b;
-          ultimo = 'el servidor devolvió algo que no es un PDF';
+          // El error dice qué devolvió el servidor para poder distinguir sesión, permiso o HTML.
+          const tipo = r.headers.get('content-type') || 'sin tipo';
+          let txt = '';
+          try { txt = new TextDecoder().decode(b.slice(0, 400)); } catch (e) { /* sin vista previa */ }
+          const titulo = (txt.match(/<title[^>]*>([^<]*)/i) || [])[1];
+          try { console.warn('[ACUSES] ImprimirAcuse no devolvió PDF:', tipo, txt.slice(0, 500)); } catch (e) { /* consola no disponible */ }
+          ultimo = 'el servidor devolvió ' + tipo + (titulo ? ' · ' + titulo.trim() : '') + ' (' + b.length + ' bytes)';
         } catch (e) {
           if (e.name === 'AbortError' || e.fatal) throw e;
           ultimo = e.message;
