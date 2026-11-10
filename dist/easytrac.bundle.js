@@ -6,7 +6,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.14'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.15'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -3721,6 +3721,53 @@ function partesFecha(f) {
       return s.indexOf('%PDF-') >= 0;
     }
 
+    // ImprimirAcuse responde una página que arma el PDF con jsPDF y navega al data:;
+    // se ejecuta en un iframe y se captura el base64 antes de que navegue.
+    let sinkN = 0;
+    function pdfDeHtml(html) {
+      return new Promise(resolve => {
+        const id = 'sa-pdf-sink-' + (++sinkN);
+        const shim = '<scr' + 'ipt>(function(){var real;function w(v){real=v;try{' +
+          'if(!v||typeof v.encode!=="function"||v.encode.__acuse)return;var o=v.encode;' +
+          'v.encode=function(x){var s=o.call(v,x);try{parent.document.getElementById("' + id + '").value=s;}catch(e){}return s;};' +
+          'v.encode.__acuse=1;}catch(e){}}' +
+          'try{Object.defineProperty(window,"Base64",{configurable:true,get:function(){return real;},set:w});}catch(e){}' +
+          'function h(){try{var b=window.Base64;if(b&&(!b.encode||!b.encode.__acuse))w(b);}catch(e){}}' +
+          'var t=setInterval(h,30);h();setTimeout(function(){clearInterval(t);},15000);})();</scr' + 'ipt>';
+        const doc = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, m => m + shim) : shim + html;
+        const sink = document.createElement('textarea');
+        sink.id = id;
+        sink.style.display = 'none';
+        document.body.appendChild(sink);
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        let listo = false, reloj = 0, tope = 0;
+        const fin = v => {
+          if (listo) return;
+          listo = true;
+          clearInterval(reloj);
+          clearTimeout(tope);
+          iframe.remove();
+          sink.remove();
+          resolve(v);
+        };
+        reloj = setInterval(() => {
+          if (!sink.value) return;
+          try { fin(base64Bytes(sink.value)); } catch (e) { fin(null); }
+        }, 100);
+        tope = setTimeout(() => fin(null), 10000);
+        iframe.srcdoc = doc;
+        document.body.appendChild(iframe);
+      });
+    }
+
+    function base64Bytes(s) {
+      const bin = atob(String(s).replace(/\s+/g, ''));
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+
     async function bajarPdf(it) {
       let ultimo = 'no se pudo obtener el PDF';
       for (let i = 0; i < 3; i++) {
@@ -3729,6 +3776,12 @@ function partesFecha(f) {
           const r = await post('/GasLP/Administracion/ImprimirAcuse', { idAcuse: it.idAcuse }, 0);
           const b = new Uint8Array(await r.arrayBuffer());
           if (esPdf(b)) return b;
+          let html = '';
+          try { html = new TextDecoder().decode(b); } catch (e) { /* binario sin texto */ }
+          if (html && /jspdf|datauri/i.test(html)) {
+            const pdf = await pdfDeHtml(html);
+            if (esPdf(pdf)) return pdf;
+          }
           // El error dice qué devolvió el servidor para poder distinguir sesión, permiso o HTML.
           const tipo = r.headers.get('content-type') || 'sin tipo';
           let txt = '';
