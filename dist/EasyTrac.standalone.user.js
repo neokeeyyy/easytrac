@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.8
+// @version      1.1.9
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.8'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.9'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -4754,6 +4754,8 @@ function partesFecha(f) {
             norm: norm,
             parsear: parsear,
             parsearEstaciones: parsearEstaciones,
+            parsearES: parsearES,
+            esSemanaES: esSemanaES,
             parsearReporte: parsearReporte,
             colaDeEstaciones: colaDeEstaciones,
             elegirColumna: elegirColumna,
@@ -5642,7 +5644,7 @@ function partesFecha(f) {
 
     function parsearES(texto) {
         var lineas = texto.split(/\r?\n/);
-        var res = { fechas: [], ventas: [] };
+        var res = { fechas: [], ventas: [], nVentas: 0 };
         for (var i = 0; i < lineas.length; i++) {
             var c = cells(lineas[i]);
             var noVacias = c.filter(function (x) { return x !== ''; });
@@ -5653,6 +5655,7 @@ function partesFecha(f) {
             if (!noVacias.length) continue;
             var primer = noVacias[0].toUpperCase();
             if (primer.indexOf('VENTA LITROS') === 0) {
+                res.nVentas++;
                 var seq = c.filter(celdaValorES);
                 var cols = [];
                 for (var j = 0; j + 2 < seq.length; j += 3) {
@@ -5662,6 +5665,12 @@ function partesFecha(f) {
             }
         }
         return res;
+    }
+
+    // El bloque de una sola estación trae una única fila VENTA LITROS; el
+    // REPORTE completo trae una por estación y debe seguir yendo a la cola.
+    function esSemanaES(p) {
+        return !!p && p.nVentas === 1 && p.fechas.length >= 5 && p.ventas.length >= 7;
     }
 
     function sleep(ms) {
@@ -6018,6 +6027,17 @@ function partesFecha(f) {
     // Mismo camino para el texto pegado y para el archivo soltado.
     function procesarTexto(texto) {
         var reporte = parsearReporte(texto);
+
+        // En una página ES, el bloque de una sola estación se llena directo;
+        // el REPORTE completo (varias filas VENTA LITROS) sigue yendo a la cola.
+        if (esPaginaES) {
+            var pe = parsearES(texto);
+            if (esSemanaES(pe)) {
+                fillES(texto, pe);
+                return true;
+            }
+        }
+
         if (reporte.estaciones.length) {
             pintarEstaciones(reporte.estaciones, reporte.municipios.fechas);
             if (esPaginaDisPla) {
@@ -6040,12 +6060,6 @@ function partesFecha(f) {
             return true;
         }
 
-        if (esPaginaES) {
-            var pe = parsearES(texto);
-            if (pe.fechas.length < 5 || pe.ventas.length < 7) return false;
-            fillES(texto, pe);
-            return true;
-        }
         return false;
     }
 

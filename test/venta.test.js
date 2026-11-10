@@ -2,7 +2,7 @@
 
 const test = require('bun:test').test;
 const assert = require('node:assert');
-const { norm, parsear, parsearEstaciones, parsearReporte, colaDeEstaciones, elegirColumna, resolverFilas, valoresDeLinea, xlsxHojaATexto, rutaHojaReporte } = require('../src/40-venta.js');
+const { norm, parsear, parsearEstaciones, parsearES, esSemanaES, parsearReporte, colaDeEstaciones, elegirColumna, resolverFilas, valoresDeLinea, xlsxHojaATexto, rutaHojaReporte } = require('../src/40-venta.js');
 const { readFileSync } = require('node:fs');
 
 
@@ -440,6 +440,48 @@ test('bloque vertical de un dia: bloques por posicion y total sin la palabra TOT
   }
   const r = resolverFilas(res.bloques, filas, 0);
   assert.deepEqual(r.asignaciones.map((a) => a.fila.idVenta), [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
+test('semana ES de una sola estacion: se llena directo y no va a la cola', () => {
+  const dias = [
+    'lunes, 02 de noviembre de 2026',
+    'martes, 03 de noviembre de 2026',
+    'miércoles, 04 de noviembre de 2026',
+    'jueves, 05 de noviembre de 2026',
+    'viernes, 06 de noviembre de 2026',
+    'sábado, 07 de noviembre de 2026',
+    'domingo, 08 de noviembre de 2026',
+  ];
+  const cabecera = ['SUCURSAL:', 'ESTACION PLANTA'];
+  const venta = ['VENTA LITROS'];
+  dias.forEach(() => {
+    cabecera.push('VOLUMEN', 'PRECIO', 'IMPORTE');
+    venta.push('0', '$-', '$-');
+  });
+  const texto = [
+    dias.join('\t'),
+    'CAP. AL 100% 5,000 LTS.\tCAP. AL 90% 4,500 LTS',
+    ['TIPO DE PERMISO:', '', 'ESTACIÓN DE SERVICO'].join('\t'),
+    ['N° DE PERMISO:', '', 'LP/16140/EXP/ES/2016'].join('\t'),
+    cabecera.join('\t'),
+    venta.join('\t'),
+  ].join('\n');
+
+  const p = parsearES(texto);
+  assert.equal(p.nVentas, 1);
+  assert.equal(p.fechas.length, 7);
+  assert.equal(p.ventas.length, 7);
+  assert.deepEqual(p.ventas[0], { vol: '0', precio: '$-', imp: '$-' });
+  assert.equal(esSemanaES(p), true);
+
+  const est = parsearEstaciones(texto);
+  assert.equal(est.length, 1);
+  assert.equal(est[0].permiso, 'LP/16140/EXP/ES/2016');
+  assert.equal(est[0].ventas.length, 7);
+
+  const doble = parsearES(texto + '\n' + texto);
+  assert.equal(doble.nVentas, 2);
+  assert.equal(esSemanaES(doble), false);
 });
 
 

@@ -14,6 +14,8 @@
             norm: norm,
             parsear: parsear,
             parsearEstaciones: parsearEstaciones,
+            parsearES: parsearES,
+            esSemanaES: esSemanaES,
             parsearReporte: parsearReporte,
             colaDeEstaciones: colaDeEstaciones,
             elegirColumna: elegirColumna,
@@ -902,7 +904,7 @@
 
     function parsearES(texto) {
         var lineas = texto.split(/\r?\n/);
-        var res = { fechas: [], ventas: [] };
+        var res = { fechas: [], ventas: [], nVentas: 0 };
         for (var i = 0; i < lineas.length; i++) {
             var c = cells(lineas[i]);
             var noVacias = c.filter(function (x) { return x !== ''; });
@@ -913,6 +915,7 @@
             if (!noVacias.length) continue;
             var primer = noVacias[0].toUpperCase();
             if (primer.indexOf('VENTA LITROS') === 0) {
+                res.nVentas++;
                 var seq = c.filter(celdaValorES);
                 var cols = [];
                 for (var j = 0; j + 2 < seq.length; j += 3) {
@@ -922,6 +925,12 @@
             }
         }
         return res;
+    }
+
+    // El bloque de una sola estación trae una única fila VENTA LITROS; el
+    // REPORTE completo trae una por estación y debe seguir yendo a la cola.
+    function esSemanaES(p) {
+        return !!p && p.nVentas === 1 && p.fechas.length >= 5 && p.ventas.length >= 7;
     }
 
     function sleep(ms) {
@@ -1278,6 +1287,17 @@
     // Mismo camino para el texto pegado y para el archivo soltado.
     function procesarTexto(texto) {
         var reporte = parsearReporte(texto);
+
+        // En una página ES, el bloque de una sola estación se llena directo;
+        // el REPORTE completo (varias filas VENTA LITROS) sigue yendo a la cola.
+        if (esPaginaES) {
+            var pe = parsearES(texto);
+            if (esSemanaES(pe)) {
+                fillES(texto, pe);
+                return true;
+            }
+        }
+
         if (reporte.estaciones.length) {
             pintarEstaciones(reporte.estaciones, reporte.municipios.fechas);
             if (esPaginaDisPla) {
@@ -1300,12 +1320,6 @@
             return true;
         }
 
-        if (esPaginaES) {
-            var pe = parsearES(texto);
-            if (pe.fechas.length < 5 || pe.ventas.length < 7) return false;
-            fillES(texto, pe);
-            return true;
-        }
         return false;
     }
 
