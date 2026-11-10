@@ -6,7 +6,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.7'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.8'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -4834,6 +4834,9 @@ function partesFecha(f) {
             var esCab = c.some(function (x) { return norm(x) === 'volumen'; });
             // La cabecera de la matriz municipal nombra MUNICIPIO; la de recipientes no.
             var esCabMunicipio = esCab && c.some(function (x) { return norm(x) === 'municipio'; });
+            // La cabecera de recipientes nombra RECIPIENTES/CILINDRERAS; sin esas
+            // palabras, una cabecera VOLUMEN abre otro bloque (formato vertical).
+            var esCabRecipientes = esCab && c.some(function (x) { return /RECIPIENTE|CILINDRERA|TRANSPORTABLE/.test(norm(x)); });
             var nums = c.filter(esNumero);
             var hayDash = c.some(esDash);
             // Las celdas «$-» del domingo cuentan como 0 para no perder la fila entera.
@@ -4859,7 +4862,13 @@ function partesFecha(f) {
                     nBloques++;
                     continue;
                 }
-                if (esCab) { fase = 'recipientes'; continue; }
+                if (esCab && esCabRecipientes) { fase = 'recipientes'; continue; }
+                if (esCab) {
+                    seccion = { nombre: null, municipio: null, lineas: [] };
+                    res.bloques.push(seccion);
+                    nBloques++;
+                    continue;
+                }
                 if (nBloques >= 1 && norm(c[0]).indexOf('total') === 0) {
                     if (numsDash.length === 2) {
                         res.filaTotal = numsDash;
@@ -4873,6 +4882,27 @@ function partesFecha(f) {
                         }
                     }
                     fase = 'recipientes'; continue;
+                }
+                if (numsDash.length === 2 && nBloques >= 1) {
+                    var sumaVol = 0, sumaImp = 0;
+                    for (var bi = 0; bi < res.bloques.length; bi++) {
+                        var ls = res.bloques[bi].lineas || [];
+                        for (var li = 0; li < ls.length; li++) {
+                            var ln = ls[li].nums;
+                            if (!ls[li].cero && ln && ln.length === 3) {
+                                sumaVol += ln[0];
+                                sumaImp += ln[2];
+                            }
+                        }
+                    }
+                    // Formato vertical: el total final no trae la palabra TOTAL;
+                    // se reconoce porque cuadra con la suma de las filas del bloque.
+                    if (Math.abs(numsDash[0] - sumaVol) <= 2 && Math.abs(numsDash[1] - sumaImp) <= 0.05) {
+                        res.filaTotal = numsDash;
+                        fase = 'recipientes';
+                        continue;
+                    }
+                    continue;
                 }
                 if (nums.length === 2) continue;
                 if (numsDash.length >= 3 && numsDash.length % 3 === 0) {

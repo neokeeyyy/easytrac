@@ -396,5 +396,51 @@ test('bloque semanal con celdas $ - conserva la fila y el total por dia', () => 
   assert.equal(res.recipientes.lineas[0].sinVenta, true);
 });
 
+test('bloque vertical de un dia: bloques por posicion y total sin la palabra TOTAL', () => {
+  const lineas = [
+    'lunes, 02 de noviembre de 2026',
+    '',
+    '',
+    '13,704',
+    '491',
+    '',
+    '',
+    'VOLUMEN\t PRECIO \t IMPORTE',
+    '685\t $11.42 \t $7,824.82',
+    '2,741\t $11.42 \t $31,299.27',
+    '',
+    'VOLUMEN\t PRECIO \t IMPORTE',
+    '685\t $11.27 \t $7,722.04',
+    '2,741\t $11.27 \t $30,888.16',
+    '',
+    'VOLUMEN\t PRECIO \t IMPORTE',
+    '685\t $11.12 \t $7,617.13',
+    '2,741\t $11.12 \t $30,468.51',
+    '',
+    'VOLUMEN\t PRECIO \t IMPORTE',
+    '685\t $11.27 \t $7,722.04',
+    '2,741\t $11.27 \t $30,888.16',
+    '',
+    '13,704\t\t $154,430.11',
+  ];
+  const res = parsear(lineas.join('\n'));
+
+  assert.equal(res.fechas.length, 1);
+  assert.deepEqual(res.totalLitros, [13704]);
+  assert.deepEqual(res.autoconsumo, [491]);
+  assert.equal(res.bloques.length, 4);
+  assert.deepEqual(res.bloques.map((b) => b.lineas.length), [2, 2, 2, 2]);
+  assert.deepEqual(res.bloques[0].lineas[0].nums, [685, 11.42, 7824.82]);
+  assert.deepEqual(res.filaTotal, [13704, 154430.11]);
+  assert.equal(res.recipientes.lineas.length, 0);
+
+  const filas = [];
+  for (let i = 1; i <= 8; i++) {
+    filas.push({ idVenta: i, entidadFederativa: 'X', municipio: 'M' + i, sector: i % 2 ? 'Comercial' : 'Residencial' });
+  }
+  const r = resolverFilas(res.bloques, filas, 0);
+  assert.deepEqual(r.asignaciones.map((a) => a.fila.idVenta), [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
 
 
