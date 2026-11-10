@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 const MODULES = [
   '01-core.js', '02-store.js', '03-http.js', '04-dates.js', '05-text.js', '06-permisos.js',
   '10-ui-tokens.js', '11-ui-sidebar.js', '12-ui-notice.js', '13-ui-grid.js', '14-ui-config.js', '20-acs.js', '30-acuses.js',
-  '40-venta.js', '50-fecha.js', '60-precios-cne.js', '70-traspasos.js',
+  '40-venta.js', '50-fecha.js', '60-precios-cne.js', '65-compra.js', '70-traspasos.js',
 ];
 
 const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -144,6 +144,12 @@ test('a pasted matrix becomes a grid and serializes back', async () => {
   expect(win.EasyTrac.grid.serializar(matrix)).toBe('TRASPASOS (KILOS)\t26/10/2026\nOjuelos-Lagos\t3529');
 });
 
+test('la pestaña Repetir compra aparece en Compras', async () => {
+  const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/Index');
+  expect(tabs(win)).toContain('repetir');
+  expect(win.document.querySelector('#rc-repetir')).toBeTruthy();
+});
+
 test('el standalone instalable arranca igual que los módulos', async () => {
   const raw = readFileSync(new URL('../dist/EasyTrac.standalone.user.js', import.meta.url), 'utf8');
   const code = raw.slice(raw.indexOf('// ==/UserScript==') + 18);
@@ -157,8 +163,8 @@ test('el standalone instalable arranca igual que los módulos', async () => {
 test('el loader apunta a un módulo por archivo y no pide grants', () => {
   const head = readFileSync(new URL('../EasyTrac.user.js', import.meta.url), 'utf8');
   const requires = head.split('\n').filter((l) => l.startsWith('// @require'));
-  expect(requires.length).toBe(21); /* 4 librerías + 17 módulos */
-  expect(requires.filter((l) => l.includes('/src/')).length).toBe(17);
+  expect(requires.length).toBe(22); /* 4 librerías + 18 módulos */
+  expect(requires.filter((l) => l.includes('/src/')).length).toBe(18);
   expect(head).toContain('// @grant        GM_xmlhttpRequest');
   expect(head).toContain('@connect      www.gob.mx');
   expect(head).toContain('@match        https://siretrac.cne.gob.mx/*');

@@ -27,6 +27,7 @@ const MODULES = [
   '40-venta.js',
   '50-fecha.js',
   '60-precios-cne.js',
+  '65-compra.js',
   '70-traspasos.js',
 ];
 
