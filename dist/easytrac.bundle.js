@@ -6,7 +6,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.9'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.10'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -3235,22 +3235,43 @@ function nombreDeEstacion(perm) {
   return (fila && String(fila.nombre || '').trim()) || '';
 }
 
+// Orden fijo de la portada: operación y luego subtipo. La lista usa el mismo
+// comparador para que ambos coincidan aunque el registro llegue en otro orden.
+const ORDEN_OP = ['COMPRA', 'VENTA', 'RECEPCION', 'ENTREGA', 'DESPACHO', 'ACEPTACION', 'INVENTARIO', 'FACTURA', 'PRECIO', 'TRASPASO'];
+
+function etiquetaSubtipo(r) {
+  const s = (r && r.sub) || {};
+  // Igual que la columna Subtipo del administrador; si viene vacío, el tipo de acuse.
+  return String(s.texto || (r && r.it && r.it.tipoAcuse) || s.sigla || 'SIN TIPO')
+    .replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+function rangoSubtipo(r) {
+  const i = ORDEN_OP.indexOf(String((r && r.op) || '').toUpperCase());
+  return i < 0 ? ORDEN_OP.length : i;
+}
+
+function cmpSubtipo(a, b) {
+  return rangoSubtipo(a) - rangoSubtipo(b) || etiquetaSubtipo(a).localeCompare(etiquetaSubtipo(b));
+}
+
 // Recuento de la portada por SUBTIPO del listado, con el código de registro de cada
-// acuse. Los subtipos salen en el orden en que aparecen y solo los que tienen acuses.
+// acuse. Los subtipos salen en el orden fijo y solo los que tienen acuses.
 function gruposPorSubtipo(filas) {
   const grupos = [], porNombre = new Map();
   for (const r of filas || []) {
-    const s = (r && r.sub) || {};
-    // Igual que la columna Subtipo del administrador; si viene vacío, el tipo de acuse.
-    const label = String(s.texto || (r && r.it && r.it.tipoAcuse) || s.sigla || 'SIN TIPO')
-      .replace(/\s+/g, ' ').trim().toUpperCase();
+    const label = etiquetaSubtipo(r);
     let g = porNombre.get(label);
-    if (!g) { g = { label: label, n: 0, codigos: [] }; porNombre.set(label, g); grupos.push(g); }
+    if (!g) {
+      g = { label: label, orden: rangoSubtipo(r), n: 0, codigos: [] };
+      porNombre.set(label, g);
+      grupos.push(g);
+    }
     g.n += 1;
     const codigo = String((r && r.nor) || '').trim();
     if (codigo && codigo !== 'SIN_NOR') g.codigos.push(codigo);
   }
-  return grupos;
+  return grupos.sort((a, b) => (a.orden - b.orden) || a.label.localeCompare(b.label));
 }
 
 // Fecha a partes sueltas. La portada recibe el periodo como Date (d1/d2 del análisis),
@@ -3516,7 +3537,7 @@ function partesFecha(f) {
 
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla };
   }
 
   // ===================== Arranque DOM =====================
@@ -4059,6 +4080,8 @@ function partesFecha(f) {
       // Solo se listan los acuses cuya fecha de operación cae en el periodo.
       filas = tmp.filter(r => r.enRango);
       if (!filas.length) { st('Sin acuses en el periodo'); return; }
+      // Agrupados por tipo y subtipo; dentro del grupo se conserva el orden de registro.
+      filas.sort(cmpSubtipo);
       filas.forEach((r, i) => { r.n = i; });
       marcaDups();
       sel = new Set(filas.filter(r => r.enRango && !r.dup && !r.error).map(r => r.n));
@@ -4094,6 +4117,7 @@ function partesFecha(f) {
     }
 
     function aplicarFiltro() {
+      $('#sa-lista').classList.toggle('sa-filtrando', !!String($('#sa-bus').value || '').trim());
       document.querySelectorAll('#sa-lista .sa-i').forEach(el => {
         const r = filas[+el.dataset.n];
         el.hidden = !(r && coincide(r));
@@ -4103,9 +4127,20 @@ function partesFecha(f) {
     }
 
     function render() {
-      $('#sa-lista').innerHTML = filas.map(r =>
-        '<div class="sa-i' + (r.dup ? ' sa-dup' : '') + (r.error ? ' sa-err' : '') + '" role="option" tabindex="-1" data-n="' + r.n + '" aria-selected="' + sel.has(r.n) + '">' + esc(labelDe(r)) + '</div>'
-      ).join('');
+      const cuenta = {};
+      filas.forEach(r => { const g = etiquetaSubtipo(r); cuenta[g] = (cuenta[g] || 0) + 1; });
+      let grupo = '', html = '';
+      filas.forEach(r => {
+        const g = etiquetaSubtipo(r);
+        if (g !== grupo) {
+          grupo = g;
+          html += '<div class="sa-grupo" role="presentation">' + esc(g) + '<span>' + cuenta[g] + '</span></div>';
+        }
+        html += '<div class="sa-i' + (r.dup ? ' sa-dup' : '') + (r.error ? ' sa-err' : '') +
+          '" role="option" tabindex="-1" data-n="' + r.n + '" aria-selected="' + sel.has(r.n) + '">' +
+          esc(labelDe(r)) + '</div>';
+      });
+      $('#sa-lista').innerHTML = html;
       pintarSel();
       aplicarFiltro();
     }
@@ -4276,9 +4311,8 @@ function partesFecha(f) {
         if (!por.has(k)) por.set(k, []);
         por.get(k).push(r);
       }
-      const cmp = (a, b) => (a.fOp - b.fOp) || String(a.nor).localeCompare(String(b.nor)) || (a.it.idAcuse - b.it.idAcuse);
       return [...por.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([perm, grupo]) => ({ perm, filas: grupo.sort(cmp) }));
+        .map(([perm, grupo]) => ({ perm, filas: grupo.sort(cmpSubtipo) }));
     }
 
     // Portada según la plantilla de acuses: Arial Narrow en el papel, Helvetica en el PDF
@@ -4468,6 +4502,9 @@ function partesFecha(f) {
       #sa-panel .sa-i.sa-dup{color:#706F6F}
       #sa-panel .sa-i.sa-err{color:#C60C0E}
       #sa-panel .sa-i[hidden]{display:none}
+      #sa-panel .sa-grupo{padding:6px 6px 2px;font-size:10px;line-height:1.3;color:#706F6F;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #e5e5e5}
+      #sa-panel .sa-grupo span{float:right}
+      #sa-lista.sa-filtrando .sa-grupo{display:none}
       #sa-panel .sa-avisos{font-size:10px;line-height:1.35;color:#C60C0E;margin-top:3px;max-height:72px;overflow:auto}
       #sa-panel .sa-avisos[hidden]{display:none}
       #sa-panel .sa-st{font-size:10px;line-height:1.3;color:#706F6F;min-height:13px;margin-top:3px;word-break:break-word}

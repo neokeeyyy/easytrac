@@ -154,28 +154,41 @@ test('permisosDeTabla lee la tabla #example igual que el escáner de traspasos',
 
 test('gruposPorSubtipo cuenta por el subtipo del listado y guarda sus codigos', function () {
   const filas = [
-    { nor: '1001', sub: { texto: 'Venta' } },
-    { nor: '1002', sub: { texto: 'VENTA' } },
-    { nor: '1003', sub: { texto: 'Aceptar registro de recepción' } },
-    { nor: '1004', it: { tipoAcuse: 'Nuevo Registro de Compra' }, sub: { texto: '', sigla: 'NRC' } },
-    { nor: 'SIN_NOR', it: { tipoAcuse: 'Nuevo Registro de Compra' }, sub: { texto: '', sigla: 'NRC' } }
+    { nor: '1001', op: 'VENTA', sub: { texto: 'Venta' } },
+    { nor: '1002', op: 'VENTA', sub: { texto: 'VENTA' } },
+    { nor: '1003', op: 'RECEPCION', sub: { texto: 'Aceptar registro de recepción' } },
+    { nor: '1004', op: 'COMPRA', it: { tipoAcuse: 'Nuevo Registro de Compra' }, sub: { texto: '', sigla: 'NRC' } },
+    { nor: 'SIN_NOR', op: 'COMPRA', it: { tipoAcuse: 'Nuevo Registro de Compra' }, sub: { texto: '', sigla: 'NRC' } }
   ];
   const g = api.gruposPorSubtipo(filas);
-  assert.deepEqual(g.map(x => x.label), ['VENTA', 'ACEPTAR REGISTRO DE RECEPCIÓN', 'NUEVO REGISTRO DE COMPRA']);
-  assert.deepEqual(g.map(x => x.n), [2, 1, 2]);
-  assert.deepEqual(g[0].codigos, ['1001', '1002']);
-  assert.deepEqual(g[1].codigos, ['1003']);
-  assert.deepEqual(g[2].codigos, ['1004']);
+  assert.deepEqual(g.map(x => x.label), ['NUEVO REGISTRO DE COMPRA', 'VENTA', 'ACEPTAR REGISTRO DE RECEPCIÓN']);
+  assert.deepEqual(g.map(x => x.n), [2, 2, 1]);
+  assert.deepEqual(g[0].codigos, ['1004']);
+  assert.deepEqual(g[1].codigos, ['1001', '1002']);
+  assert.deepEqual(g[2].codigos, ['1003']);
 });
 
 test('gruposPorSubtipo usa la sigla cuando el subtipo viene vacio', function () {
   const g = api.gruposPorSubtipo([
-    { nor: '2001', it: { tipoAcuse: 'VENTA' }, sub: { texto: '', sigla: 'SIN_TIPO' } },
+    { nor: '2001', op: 'VENTA', it: { tipoAcuse: 'VENTA' }, sub: { texto: '', sigla: 'SIN_TIPO' } },
     { nor: '2002', sub: { texto: '', sigla: 'CRC' } },
     { nor: '2003', sub: null }
   ]);
   assert.deepEqual(g.map(x => x.label), ['VENTA', 'CRC', 'SIN TIPO']);
   assert.deepEqual(g.map(x => x.n), [1, 1, 1]);
+});
+
+test('cmpSubtipo ordena por operacion y luego por subtipo', function () {
+  const filas = [
+    { op: 'VENTA', sub: { texto: 'Venta' } },
+    { op: 'COMPRA', sub: { texto: 'Nuevo registro de compra' } },
+    { op: 'VENTA', sub: { texto: 'Aceptar registro de venta' } },
+    { op: 'OTROS', sub: { texto: 'Inventario' } }
+  ];
+  assert.deepEqual(
+    filas.slice().sort(api.cmpSubtipo).map(r => r.sub.texto),
+    ['Nuevo registro de compra', 'Aceptar registro de venta', 'Venta', 'Inventario']
+  );
 });
 
 test('partesFecha acepta el Date del periodo y el texto DD/MM/AAAA', function () {
