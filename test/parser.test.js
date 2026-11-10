@@ -423,6 +423,35 @@ test('buildTransfers asigna el vehiculo por defecto y vehiculosFaltantes lo dete
   assert.deepEqual(api.vehiculosFaltantes(sinVehiculo), sinVehiculo);
 });
 
+test('buildTransfers usa el vehículo global guardado en Ajustes', function () {
+  const ET = globalThis.EasyTrac;
+  const acsPrevio = ET.acs;
+  const storePrevio = ET.store;
+  const lista = [
+    { nombre: 'A', placas: 'PLACA1', id: '1' },
+    { nombre: 'B', placas: 'PLACA2', id: '2' },
+  ];
+  ET.acs = { vehiculos: () => lista };
+  ET.store = {
+    get: (k, d) => (k === 'traspasos_vehiculo' ? 'PLACA2' : d),
+    set: () => true,
+  };
+  try {
+    const rows = [{
+      status: 'OK',
+      station: 'PLANTA',
+      destination: { permit: 'LP/2', id: '2' },
+      source: { permit: 'LP/1', id: '1' },
+      date: '2026-10-26',
+      volumeKg: 100,
+    }];
+    assert.equal(api.buildTransfers(rows, '2026-11-03', lista)[0].vehiculo.placas, 'PLACA2');
+  } finally {
+    ET.acs = acsPrevio;
+    ET.store = storePrevio;
+  }
+});
+
 test('evaluateRows resuelve la lista por código LP aunque cambien los ids', function () {
   const permits = [
     { id: '900', permit: 'LP/14432/DIST/PLA/2016', activity: 'Distribuidor por Planta de Distribucion' },

@@ -7,37 +7,6 @@ require('../src/01-core.js');
 require('../src/02-store.js');
 const config = require('../src/14-ui-config.js');
 
-test('necesitaRevision compara la versión guardada con la instalada', () => {
-  expect(config.necesitaRevision('', '1.0.15')).toBe(true);
-  expect(config.necesitaRevision(undefined, '1.0.15')).toBe(true);
-  expect(config.necesitaRevision('1.0.14', '1.0.15')).toBe(true);
-  expect(config.necesitaRevision('1.0.15', '1.0.15')).toBe(false);
-  // Sin versión del loader todavía (marcador), no se pregunta: si no, el modal sale en cada carga.
-  expect(config.necesitaRevision('1.0.15', '')).toBe(false);
-  expect(config.necesitaRevision('1.0.15', '0.0.0-dev')).toBe(false);
-  expect(config.necesitaRevision('', '0.0.0-dev')).toBe(false);
-});
-
-test('marcarVisto escribe cfg_visto con la versión instalada', () => {
-  const guardados = {};
-  const ET = globalThis.EasyTrac;
-  const original = ET.store;
-  ET.store = {
-    get: (k, d) => (k in guardados ? guardados[k] : d),
-    set: (k, v) => { guardados[k] = v; return true; },
-    del: (k) => { delete guardados[k]; },
-  };
-  try {
-    expect(ET.config.marcarVisto('1.0.15')).toBe('1.0.15');
-    expect(guardados.cfg_visto).toBe('1.0.15');
-    ET.config.marcarVisto('1.0.16');
-    expect(guardados.cfg_visto).toBe('1.0.16');
-    expect(config.necesitaRevision(guardados.cfg_visto, '1.0.16')).toBe(false);
-  } finally {
-    ET.store = original;
-  }
-});
-
 test('valor y set pasan por el leer/guardar del registro', () => {
   let guardado = 'inicial';
   const ET = globalThis.EasyTrac;

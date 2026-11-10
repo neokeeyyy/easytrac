@@ -71,46 +71,17 @@ test('el panel Ajustes reúne las opciones persistentes', async () => {
   expect(pane.querySelector('#cfg-acs-incluir-no-cerradas-fact')).toBeFalsy();
   expect(doc.querySelector('#acs-fact-no-cerradas')).toBeTruthy();
   expect(pane.querySelector('#cfg-traspasos-espera')).toBeTruthy();
+  expect(pane.querySelector('#cfg-traspasos-vehiculo')).toBeTruthy();
   /* ACS ya no lleva su propio cajón de ajustes. */
   expect(doc.querySelector('#acs-cfg')).toBeFalsy();
   expect(doc.querySelector('#acs-cfg-toggle')).toBeFalsy();
 });
 
-test('el modal de revisión no deja usar el toolkit hasta guardar', async () => {
+test('el aviso de revisar la configuración ya no aparece', async () => {
   const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros');
-  const doc = win.document;
-  /* El aviso se comprueba un tick después de cargar, cuando el loader ya escribió la versión. */
   await new Promise((r) => setTimeout(r, 10));
-  const modal = doc.querySelector('#etcfg-modal');
-  expect(modal).toBeTruthy();
-  const guardar = modal.querySelector('#etcfg-ok');
-  expect(guardar.disabled).toBe(true);
-
-  /* Esc y clic fuera no lo cierran. */
-  modal.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
-  doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  expect(doc.querySelector('#etcfg-modal')).toBeTruthy();
-
-  /* Sin abrir Ajustes, «Guardar y continuar» no hace nada. */
-  guardar.click();
-  expect(doc.querySelector('#etcfg-modal')).toBeTruthy();
-  expect(win.EasyTrac.store.get('cfg_visto', '')).toBe('');
-
-  modal.querySelector('#etcfg-ir').click();
-  const pane = doc.querySelector('.shub-pane[data-id="ajustes"]');
-  expect(pane.classList.contains('on')).toBe(true);
-  expect(guardar.disabled).toBe(false);
-
-  guardar.click();
-  expect(doc.querySelector('#etcfg-modal')).toBeFalsy();
-  expect(win.EasyTrac.store.get('cfg_visto', '')).toBe(VERSION);
-});
-
-test('sin cambio de versión el modal no aparece', async () => {
-  const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros', '', undefined, (w) => {
-    w.localStorage.setItem('easytrac:cfg_visto', JSON.stringify(VERSION));
-  });
   expect(win.document.querySelector('#etcfg-modal')).toBeFalsy();
+  expect(win.EasyTrac.store.get('cfg_visto', '')).toBe('');
 });
 
 test('acuses stays out of pages it cannot work on', async () => {
@@ -137,6 +108,8 @@ test('the traspasos matrix is a cell grid mounted in its tab', async () => {
   const host = win.document.querySelector('#siretrac-traspasos-host');
   expect(host).toBeTruthy();
   expect(host.closest('.shub-pane')).toBeTruthy();
+  expect(host.shadowRoot.querySelector('[data-tab="config"]')).toBeFalsy();
+  expect(host.shadowRoot.querySelector('[data-tab="envio"]')).toBeTruthy();
   const matrix = host.shadowRoot.querySelector('[data-role="matrix"]');
   expect(matrix).toBeTruthy();
   expect(matrix.getAttribute('data-et-mount')).toBe('1');

@@ -14,7 +14,7 @@ Reemplaza a seis userscripts que vivían sueltos. Los cinco originales quedan en
 | **Fecha** | Ajuste de fechas en SToolkit. | 300 px |
 | **Precios CNE** | Llena precio, fecha y hora en Agregar Precios con el PDF semanal de precios máximos de CNE. | 300 px |
 | **Traspasos** | Carga de la matriz de traspasos de GLP desde una hoja editable. | 780 px |
-| **Ajustes** | Todas las opciones persistentes en un solo sitio, con revisión obligatoria al estrenar versión. | 420 px |
+| **Ajustes** | Todas las opciones persistentes en un solo sitio. | 420 px |
 
 La barra se puede contraer a una franja delgada para no tapar la página, y recuerda la última pestaña que usaste.
 
@@ -52,7 +52,7 @@ src/
   11-ui-sidebar.js      sidebar único (superpuesto / riel de 44 px)
   12-ui-notice.js       avisos y notificaciones
   13-ui-grid.js         hoja de cálculo para pegar matrices
-  14-ui-config.js       Ajustes únicos y revisión al arrancar
+  14-ui-config.js       Ajustes únicos
   20-acs.js             ACS completo
   30-acuses.js          descarga de acuses
   40-venta.js           auto-fill de venta (DisPla y ES)

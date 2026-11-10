@@ -697,6 +697,37 @@
     return [];
   }
 
+  /* Vehículo elegido en Ajustes para todos los traspasos. */
+  function vehiculoGlobal() {
+    var placas = ET.store ? ET.store.get('traspasos_vehiculo', '') : '';
+    if (!placas) return null;
+    return listaVehiculos().find(function (vehicle) {
+      return vehicle.placas === placas;
+    }) || null;
+  }
+
+  if (ET.config && typeof ET.config.add === 'function') {
+    ET.config.add({
+      seccion: 'Traspasos',
+      clave: 'traspasos.vehiculo',
+      etiqueta: 'Vehículo global para todos los traspasos',
+      tipo: 'select',
+      defecto: '',
+      opciones: function () {
+        return [{ valor: '', texto: '— El primero de la lista —' }].concat(
+          listaVehiculos().map(function (vehicle) {
+            return {
+              valor: vehicle.placas,
+              texto: (vehicle.nombre ? vehicle.nombre + ' — ' : '') + vehicle.placas,
+            };
+          })
+        );
+      },
+      leer: function () { return ET.store ? ET.store.get('traspasos_vehiculo', '') : ''; },
+      guardar: function (v) { if (ET.store) ET.store.set('traspasos_vehiculo', v); },
+    });
+  }
+
   /* Traspasos que no pueden enviarse porque les falta el vehículo que los trasladó. */
   function vehiculosFaltantes(transfers) {
     return (transfers || []).filter(function (transfer) {
@@ -722,7 +753,7 @@
           operationDate: row.date,
           registrationDate: regDate,
           volumeKg: row.volumeKg,
-          vehiculo: lista[0] || null,
+          vehiculo: vehiculoGlobal() || lista[0] || null,
         };
       });
   }
@@ -1649,26 +1680,16 @@
               formatKg(transfer.volumeKg)
           )
         );
-        const select = document.createElement('select');
-        select.dataset.role = 'transfer-vehicle';
-        select.dataset.index = String(index);
-        select.title = 'Vehículo que trasladó este traspaso';
-        if (!vehicles.length) {
-          select.append(option('', 'Sin vehículos'));
-          select.disabled = true;
-        } else {
-          if (!transfer.vehiculo) select.append(option('', 'Elige vehículo'));
-          for (const vehicle of vehicles) {
-            select.append(
-              option(
-                vehicle.placas,
-                (vehicle.nombre ? vehicle.nombre + ' — ' : '') + vehicle.placas
-              )
-            );
-          }
-          select.value = transfer.vehiculo ? transfer.vehiculo.placas : '';
-        }
-        row.append(select);
+        const vehiculo = transfer.vehiculo;
+        row.append(
+          el(
+            'span',
+            'st-transfer-vehicle',
+            vehiculo
+              ? (vehiculo.nombre ? vehiculo.nombre + ' — ' : '') + vehiculo.placas
+              : 'Sin vehículo'
+          )
+        );
         ui.summary.append(row);
       });
       const faltantes = vehiculosFaltantes(state.transfers);
@@ -1678,7 +1699,7 @@
             'div',
             'st-warn',
             faltantes.length +
-              ' traspaso(s) sin vehículo: elige uno en la lista antes de enviar.'
+              ' traspaso(s) sin vehículo: elige el vehículo global en Ajustes antes de enviar.'
           )
         );
       }
@@ -2395,21 +2416,6 @@
     ui.preset.addEventListener('change', function () {
       if (ui.preset.value) applyPreset(ui.preset.value);
     });
-    ui.summary.addEventListener('change', function (event) {
-      const select = event.target.closest('[data-role="transfer-vehicle"]');
-      if (!select) return;
-      const index = Number(select.dataset.index);
-      const transfer = state.transfers[index];
-      if (!transfer) return;
-      transfer.vehiculo =
-        listaVehiculos().find(function (vehicle) {
-          return vehicle.placas === select.value;
-        }) || null;
-      ui.sendStatus.textContent = '';
-      renderEnvio();
-      const again = ui.summary.querySelector('[data-role="transfer-vehicle"][data-index="' + index + '"]');
-      if (again) again.focus();
-    });
     if (typeof ResizeObserver !== 'undefined') {
       new ResizeObserver(function () {
         drawMappingCables();
@@ -2456,7 +2462,6 @@
         <button type="button" role="tab" data-tab="pega" class="is-active" aria-selected="true"><span>1</span> Pega</button>
         <button type="button" role="tab" data-tab="revisa" aria-selected="false"><span>2</span> Revisa</button>
         <button type="button" role="tab" data-tab="envio" aria-selected="false"><span>3</span> Envía</button>
-        <button type="button" role="tab" data-tab="config" class="st-tab-config" aria-selected="false">Configuración</button>
       </nav>
       <div class="st-body">
         <section data-panel="pega">
@@ -2959,7 +2964,6 @@
       border-bottom-color: #706F6F;
     }
     .st-tabs button.is-active span { background: #706F6F; border-color: #706F6F; color: #fff; }
-    .st-tab-config { margin-left: auto; }
 
     .st-body {
       padding: 16px;
@@ -3244,7 +3248,6 @@
       .st-body { padding: 16px; }
       .st-grid-2 { grid-template-columns: 1fr; }
       .st-section-head { flex-direction: column; }
-      .st-tab-config { margin-left: 0; }
       .st-hero h2, .st-section-head h2 { font-size: 21px; }
       .st-field-paste textarea { min-height: 180px; }
       .st-wire-columns { gap: 70px; }

@@ -4,14 +4,12 @@
 (function () {
   'use strict';
   var ET = globalThis.EasyTrac;
-  var VISTO = 'cfg_visto';
 
   var campos = [];
   var acciones = [];
   var porClave = {};
   var listas = {};
   var pane = null;
-  var modal = null, btnGuardar = null, abierto = false, atajo = null;
 
   function esc(s) {
     return String(s == null ? '' : s)
@@ -54,13 +52,6 @@
     if (c.tipo === 'number') v = Math.max(0, +v || 0);
     if (c.tipo === 'check') v = !!v;
     try { if (c.guardar) c.guardar(v); else ET.store.set(clave, v); } catch (e) {}
-  }
-
-  function necesitaRevision(guardado, version) {
-    /* Los @require se ejecutan antes de que el loader escriba ET.version: con el marcador
-       no se pregunta nada, o el aviso saldría en cada carga. */
-    if (!version || version === '0.0.0-dev') return false;
-    return String(guardado || '') !== String(version);
   }
 
   /* Lista de vehículos: una línea por vehículo, `nombre|placas` o solo `placas`.
@@ -285,12 +276,6 @@
     }
   }
 
-  function marcarVisto(version) {
-    var v = version === undefined ? ET.version : version;
-    ET.store.set(VISTO, v);
-    return v;
-  }
-
   /* ---------- pane ---------- */
 
   function campoHtml(c) {
@@ -303,7 +288,8 @@
       html += '<label for="' + id + '"><input type="checkbox"' + attrs + (v ? ' checked' : '') + '> ' + esc(c.etiqueta) + '</label>';
     } else if (c.tipo === 'select') {
       html += '<label for="' + id + '">' + esc(c.etiqueta) + '</label><select' + attrs + '>';
-      (c.opciones || []).forEach(function (o) {
+      var opciones = typeof c.opciones === 'function' ? c.opciones() : (c.opciones || []);
+      opciones.forEach(function (o) {
         var ov = typeof o === 'object' ? o.valor : o;
         var ot = typeof o === 'object' ? o.texto : o;
         html += '<option value="' + esc(ov) + '"' + (String(ov) === String(v) ? ' selected' : '') + '>' + esc(ot) + '</option>';
@@ -421,60 +407,6 @@
     var on = document.querySelector('#shub-panes .shub-pane.on');
     if (on && on !== pane) volverA = on.getAttribute('data-id');
     if (ET.ui.activar) ET.ui.activar('ajustes', false);
-    abierto = true;
-    if (btnGuardar) btnGuardar.disabled = false;
-  }
-
-  /* ---------- revisión obligatoria ---------- */
-
-  function guardarVisto() {
-    if (!abierto) return;
-    marcarVisto(ET.version);
-    if (atajo) document.removeEventListener('keydown', atajo, true);
-    atajo = null;
-    if (modal && modal.parentNode) modal.parentNode.removeChild(modal);
-    modal = null;
-    btnGuardar = null;
-  }
-
-  function mostrarModal() {
-    (ET.ui.style || function () {})(CSS);
-    modal = document.createElement('div');
-    modal.id = 'etcfg-modal';
-    modal.setAttribute('role', 'dialog');
-    modal.setAttribute('aria-modal', 'true');
-    modal.setAttribute('aria-labelledby', 'etcfg-modal-t');
-    modal.innerHTML =
-      '<div id="etcfg-caja">' +
-      '  <h2 id="etcfg-modal-t">Revisa la configuración</h2>' +
-      '  <p class="etcfg-modal-txt">Antes de usar el toolkit revisa los ajustes de esta versión. ' +
-      'Puedes cambiar el vehículo, las placas, las esperas y el resto de opciones desde la pestaña Ajustes.</p>' +
-      '  <p class="etcfg-modal-ver">Versión instalada: <strong>' + esc(ET.version) + '</strong></p>' +
-      '  <div class="etcfg-modal-acc">' +
-      '    <button type="button" id="etcfg-ir">Abrir Ajustes</button>' +
-      '    <button type="button" id="etcfg-ok" disabled>Guardar y continuar</button>' +
-      '  </div>' +
-      '</div>';
-    document.body.appendChild(modal);
-    btnGuardar = modal.querySelector('#etcfg-ok');
-
-    modal.querySelector('#etcfg-ir').addEventListener('click', function () {
-      abrir();
-      modal.classList.add('etcfg-min');
-      var txt = modal.querySelector('.etcfg-modal-txt');
-      if (txt) txt.textContent = 'Ajustes abiertos. Cuando termines de revisarlos, guarda y continúa.';
-    });
-    btnGuardar.addEventListener('click', guardarVisto);
-    /* Esc y el clic fuera no cierran: solo «Guardar y continuar». */
-    atajo = function (ev) { if (modal && ev.key === 'Escape') ev.preventDefault(); };
-    document.addEventListener('keydown', atajo, true);
-    modal.addEventListener('click', function (ev) { if (ev.target === modal) ev.stopPropagation(); });
-    modal.querySelector('#etcfg-ir').focus();
-  }
-
-  function revisar() {
-    if (!necesitaRevision(ET.store.get(VISTO, ''), ET.version)) return;
-    if (!modal) mostrarModal();
   }
 
   /* ---------- CSS (house-ui: Geist Pixel 400, plano, esquinas rectas, paleta --ui-*) ---------- */
@@ -517,30 +449,7 @@
     'background:var(--ui-bg);color:var(--ui-fg);border-radius:0;cursor:pointer;transition:background 120ms linear,transform 140ms var(--shub-spring);}' +
     '#etcfg-pane .etcfg-boton:hover{background:#f5f5f5;}' +
     '#etcfg-pane .etcfg-boton:active{transform:scale(.97);}' +
-    '#etcfg-pane input:focus,#etcfg-pane select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
-    '#etcfg-modal{position:fixed;inset:0;z-index:2147483100;display:flex;align-items:center;justify-content:center;padding:16px;' +
-    'background:rgba(51,51,51,.55);font:400 14px/1.43 var(--ui-font);color:var(--ui-fg);box-sizing:border-box;}' +
-    '#etcfg-modal *{box-sizing:border-box;}' +
-    '#etcfg-modal #etcfg-caja{width:min(420px,100%);background:var(--ui-bg);border:1px solid var(--ui-border-strong);padding:16px;' +
-    'animation:etcfg-in 320ms cubic-bezier(.34,1.56,.64,1) both;}' +
-    '#etcfg-caja h2{margin:0 0 8px;font-size:16px;font-weight:400;}' +
-    '#etcfg-caja .etcfg-modal-txt{margin:0 0 8px;}' +
-    '#etcfg-caja .etcfg-modal-ver{margin:0 0 14px;color:var(--ui-muted);font-size:13px;}' +
-    '#etcfg-caja .etcfg-modal-acc{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;}' +
-    '#etcfg-caja button{font:400 13px/1 var(--ui-font);padding:8px 11px;border:1px solid var(--ui-border-input);' +
-    'background:var(--ui-bg);color:var(--ui-fg);border-radius:0;cursor:pointer;transition:background 120ms linear,transform 140ms var(--shub-spring);}' +
-    '#etcfg-caja button:hover:enabled{background:#f5f5f5;}' +
-    '#etcfg-caja button:active:enabled{transform:scale(.97);}' +
-    '#etcfg-caja button:focus-visible{outline:2px solid var(--ui-focus);outline-offset:1px;}' +
-    '#etcfg-caja #etcfg-ok{background:var(--ui-primary);border-color:var(--ui-primary);color:#fff;}' +
-    '#etcfg-caja #etcfg-ok:hover:enabled{background:var(--ui-primary-hover);border-color:var(--ui-primary-hover);}' +
-    '#etcfg-caja #etcfg-ok:disabled{background:var(--ui-bg);border-color:var(--ui-border);color:var(--ui-muted);cursor:not-allowed;}' +
-    /* Revisión abierta: el cuadro se aparta a la esquina y la página queda usable. */
-    '#etcfg-modal.etcfg-min{background:transparent;pointer-events:none;align-items:flex-end;justify-content:flex-start;}' +
-    '#etcfg-modal.etcfg-min #etcfg-caja{pointer-events:auto;width:min(320px,100%);}' +
-    '#etcfg-modal.etcfg-min #etcfg-ir{display:none;}' +
-    '@keyframes etcfg-in{0%{opacity:0;transform:translateY(14px) scale(.97)}100%{opacity:1;transform:none}}' +
-    '@media (prefers-reduced-motion:reduce){#etcfg-caja{animation:none}}';
+    '#etcfg-pane input:focus,#etcfg-pane select:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}';
 
   ET.config = {
     add: add,
@@ -548,9 +457,6 @@
     valor: valor,
     set: set,
     abrir: abrir,
-    revisar: revisar,
-    necesitaRevision: necesitaRevision,
-    marcarVisto: marcarVisto,
     parseVehiculos: parseVehiculos,
     vehiculos: vehiculos,
     campos: function () { return campos.slice(); },
@@ -562,9 +468,6 @@
     ET.ready(function () {
       pintar();
       if (ET.ui.engrane) ET.ui.engrane('Ajustes', abrir, 'ajustes');
-      /* Un tick después: los @require corren antes del cuerpo del loader, que es quien
-         escribe la versión instalada. Sin esto el modal compara contra 0.0.0-dev y vuelve. */
-      setTimeout(revisar, 0);
     });
   }
 })();
