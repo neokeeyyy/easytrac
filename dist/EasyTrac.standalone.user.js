@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.10
+// @version      1.1.11
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.10'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.11'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -4450,10 +4450,16 @@ function partesFecha(f) {
       }
       if (!nAcuses) { st('Ningún PDF se pudo unir'); return; }
 
-      descargar(new Blob([await portadas.save()], { type: 'application/pdf' }), 'portadas_' + rangoTag() + '.pdf');
+      // Unimos portadas y acuses en un solo PDF: primero las portadas (con el mismo
+      // orden que el botón "Portadas") y luego los acuses.
+      const portadasPages = portadas.getPageIndices();
+      if (portadasPages.length) {
+        const copiadas = await acuses.copyPages(portadas, portadasPages);
+        for (let i = copiadas.length - 1; i >= 0; i--) acuses.insertPage(0, copiadas[i]);
+      }
       descargar(new Blob([await acuses.save()], { type: 'application/pdf' }), 'acuses_' + rangoTag() + '.pdf');
-      st('Imprimir: ' + nAcuses + ' acuses · ' + portadas.getPageCount() + ' páginas de portadas · ' +
-        acuses.getPageCount() + ' páginas de acuses' + (saltados ? ' · ' + saltados + ' sin PDF' : ''));
+      st('Imprimir: ' + nAcuses + ' acuses · ' + acuses.getPageCount() + ' páginas (portadas incluidas)' +
+        (saltados ? ' · ' + saltados + ' sin PDF' : ''));
       } finally { descargando = false; }
     }
 

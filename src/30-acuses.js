@@ -1284,10 +1284,16 @@ function partesFecha(f) {
       }
       if (!nAcuses) { st('Ningún PDF se pudo unir'); return; }
 
-      descargar(new Blob([await portadas.save()], { type: 'application/pdf' }), 'portadas_' + rangoTag() + '.pdf');
+      // Unimos portadas y acuses en un solo PDF: primero las portadas (con el mismo
+      // orden que el botón "Portadas") y luego los acuses.
+      const portadasPages = portadas.getPageIndices();
+      if (portadasPages.length) {
+        const copiadas = await acuses.copyPages(portadas, portadasPages);
+        for (let i = copiadas.length - 1; i >= 0; i--) acuses.insertPage(0, copiadas[i]);
+      }
       descargar(new Blob([await acuses.save()], { type: 'application/pdf' }), 'acuses_' + rangoTag() + '.pdf');
-      st('Imprimir: ' + nAcuses + ' acuses · ' + portadas.getPageCount() + ' páginas de portadas · ' +
-        acuses.getPageCount() + ' páginas de acuses' + (saltados ? ' · ' + saltados + ' sin PDF' : ''));
+      st('Imprimir: ' + nAcuses + ' acuses · ' + acuses.getPageCount() + ' páginas (portadas incluidas)' +
+        (saltados ? ' · ' + saltados + ' sin PDF' : ''));
       } finally { descargando = false; }
     }
 
