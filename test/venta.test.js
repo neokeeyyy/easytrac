@@ -346,5 +346,55 @@ test('fila de 3 numeros con col=1 no se escribe en el dia 0', () => {
   assert.ok(r.warns[0].indexOf('no se sabe a cuál') >= 0);
 });
 
+test('bloque semanal con celdas $ - conserva la fila y el total por dia', () => {
+  const dias = [
+    'lunes, 02 de noviembre de 2026',
+    'martes, 03 de noviembre de 2026',
+    'miércoles, 04 de noviembre de 2026',
+    'jueves, 05 de noviembre de 2026',
+    'viernes, 06 de noviembre de 2026',
+    'sábado, 07 de noviembre de 2026',
+    'domingo, 08 de noviembre de 2026',
+  ];
+  const dia = (vol, precio, imp) => [vol, precio, imp];
+  const texto = [
+    ['TIPO DE PERMISO:', '', 'PLANTA DE DISTRIBUCION'].concat(dias).join('\t'),
+    ['VENTAS TOTALES LITROS', '13,704', '15,259', '14,923', '15,260', '14,555', '15,058', '0'].join('\t'),
+    ['AUTOCONSUMOS KILOS', '491', '451', '564', '436', '489', '473', '0'].join('\t'),
+    ['MUNICIPIO', 'LOCALIDAD', 'SEGMENTO']
+      .concat(dias.map(() => ['VOLUMEN', 'PRECIO', 'IMPORTE']).flat()).join('\t'),
+    ['GUANAJUATO', 'SAN FELIPE', 'COMERCIAL',
+      ...dia('685', '$11.42', '$7,824.82'),
+      ...dia('763', '$11.54', '$8,804.31'),
+      ...dia('746', '$11.46', '$8,550.70'),
+      ...dia('763', '$11.42', '$8,713.29'),
+      ...dia('728', '$11.61', '$8,448.96'),
+      ...dia('753', '$11.43', '$8,605.60'),
+      ...dia('0', '$-', '$-')].join('\t'),
+    ['TOTAL VENTAS', '13,704', '15,259', '14,923', '15,260', '14,555', '15,058', '0',
+      '$154,430.11', '$173,798.40', '$168,842.67', '$171,940.77', '$166,736.63', '$169,897.34', '$-'].join('\t'),
+    ['VEHICULO', 'A002252', 'PLACA JU47194'].concat(dias).join('\t'),
+    ['RECIPIENTES TRANSPORTABLES Y/O PORTATILES', '', 'VOLUMEN', 'PRECIO', 'IMPORTE',
+      'VOLUMEN', 'PRECIO', 'IMPORTE', 'VOLUMEN', 'PRECIO', 'IMPORTE',
+      'VOLUMEN', 'PRECIO', 'IMPORTE', 'VOLUMEN', 'PRECIO', 'IMPORTE',
+      'VOLUMEN', 'PRECIO', 'IMPORTE', 'VOLUMEN', 'PRECIO', 'IMPORTE'].join('\t'),
+    ['VENTA CILINDRERAS KILOS', '0', '$-', '$-', '0', '$-', '$-', '0', '$-', '$-',
+      '0', '$-', '$-', '0', '$-', '$-', '0', '$-', '$-', '0', '$-', '$-'].join('\t'),
+  ].join('\n');
+
+  const res = parsear(texto);
+  const linea = res.bloques[0].lineas[0];
+
+  assert.equal(res.fechas.length, 7);
+  assert.equal(res.totalLitros[0], 13704);
+  assert.equal(res.autoconsumo[0], 491);
+  assert.equal(linea.nums.length, 21);
+  assert.equal(linea.cero, undefined);
+  assert.deepEqual(valoresDeLinea(linea.nums, 0), { vol: 685, imp: 7824.82 });
+  assert.equal(res.totalImportes[0], 154430.11);
+  assert.equal(res.recipientes.lineas.length, 1);
+  assert.equal(res.recipientes.lineas[0].sinVenta, true);
+});
+
 
 

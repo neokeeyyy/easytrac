@@ -99,7 +99,7 @@
 
     function parsear(texto) {
         var lineas = texto.split(/\r?\n/);
-        var res = { fechas: [], totalLitros: null, autoconsumo: null, bloques: [], filaTotal: null, recipientes: { lineas: [] } };
+        var res = { fechas: [], totalLitros: null, autoconsumo: null, bloques: [], filaTotal: null, totalImportes: null, recipientes: { lineas: [] } };
         var fase = 'totales';
         var seccion = null;
         var nBloques = 0;
@@ -108,13 +108,15 @@
             var noVacias = c.filter(function (x) { return x !== ''; });
             for (var k = 0; k < c.length; k++) {
                 var f = fechaDe(c[k]);
-                if (f) res.fechas.push(f);
+                if (f && res.fechas.indexOf(f) === -1) res.fechas.push(f);
             }
             var esCab = c.some(function (x) { return norm(x) === 'volumen'; });
             // La cabecera de la matriz municipal nombra MUNICIPIO; la de recipientes no.
             var esCabMunicipio = esCab && c.some(function (x) { return norm(x) === 'municipio'; });
             var nums = c.filter(esNumero);
             var hayDash = c.some(esDash);
+            // Las celdas «$-» del domingo cuentan como 0 para no perder la fila entera.
+            var numsDash = c.filter(celdaValorES).map(aNumero);
             if (fase === 'totales') {
                 if (!noVacias.length) continue;
                 if (esCab) {
@@ -137,11 +139,22 @@
                     continue;
                 }
                 if (esCab) { fase = 'recipientes'; continue; }
-                if (nums.length === 2 && nBloques >= 1 && norm(c[0]).indexOf('total') === 0) {
-                    res.filaTotal = nums.map(aNumero); fase = 'recipientes'; continue;
+                if (nBloques >= 1 && norm(c[0]).indexOf('total') === 0) {
+                    if (numsDash.length === 2) {
+                        res.filaTotal = numsDash;
+                    } else {
+                        var dias = res.totalLitros ? res.totalLitros.length : res.fechas.length;
+                        if (dias && numsDash.length === dias * 2) {
+                            if (!res.totalLitros) res.totalLitros = numsDash.slice(0, dias);
+                            res.totalImportes = numsDash.slice(dias);
+                        } else if (dias && numsDash.length === dias && !res.totalLitros) {
+                            res.totalLitros = numsDash;
+                        }
+                    }
+                    fase = 'recipientes'; continue;
                 }
                 if (nums.length === 2) continue;
-                if (nums.length >= 3 && nums.length % 3 === 0) {
+                if (numsDash.length >= 3 && numsDash.length % 3 === 0) {
                     if (!seccion.primera && c[0] !== '') seccion.primera = c[0];
                     // Nombre de la estación por forma: la primera celda de texto de la
                     // sección es el municipio. Sirve cualquier entidad, sin lista fija.
@@ -149,7 +162,7 @@
                         seccion.nombre = c[0];
                         seccion.municipio = c[1] || '';
                     }
-                    seccion.lineas.push({ celdas: c, nums: nums.map(aNumero) });
+                    seccion.lineas.push({ celdas: c, nums: numsDash });
                     continue;
                 }
                 if (hayDash) {
@@ -783,10 +796,11 @@
                     warns.push('Suma de volúmenes (' + sumVol + ') difiere del total del bloque (' + tl + ').');
                 }
             }
-            if (p.filaTotal && p.filaTotal.length === 2) {
-                if (Math.abs(p.filaTotal[1] - sumImp) > 0.01) {
-                    warns.push('Suma de importes ($' + sumImp.toFixed(2) + ') difiere del total del bloque ($' + p.filaTotal[1].toFixed(2) + ').');
-                }
+            var totalImp = null;
+            if (p.totalImportes && p.totalImportes.length > col) totalImp = p.totalImportes[col];
+            else if (p.filaTotal && p.filaTotal.length === 2) totalImp = p.filaTotal[1];
+            if (totalImp != null && Math.abs(totalImp - sumImp) > 0.05) {
+                warns.push('Suma de importes ($' + sumImp.toFixed(2) + ') difiere del total del bloque ($' + totalImp.toFixed(2) + ').');
             }
         }
 
