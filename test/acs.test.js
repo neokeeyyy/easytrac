@@ -369,3 +369,11 @@ test('el PDF normaliza el volumen con comas y rechaza el vacio o cero', function
 
 
 
+
+test('recepcion usa el volumen despachado si la pagina trae 0', function () {
+  const cero = '<input id="idVolumenCompra" value="0.00">';
+  assert.equal(acs.volumenRecepcion(cero, { cantidadDespachada: '825.00' }), '825.00');
+  assert.equal(acs.volumenRecepcion('<input id="idVolumenCompra" value="350.5">', { cantidadDespachada: '825.00' }), '350.5');
+  assert.equal(acs.volumenRecepcion(cero, {}), '');
+  assert.equal(acs.volumenRecepcion('', { cantidadDespachada: '1,234.5' }), '1,234.5');
+});

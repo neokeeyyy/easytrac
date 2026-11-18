@@ -1971,8 +1971,21 @@
   }
 
   /* ============ FORMATO DE TRASPASO ============ */
+  function numeroPositivo(valor) {
+    var n = parseFloat(String(valor == null ? '' : valor).replace(/[,\s]/g, ''));
+    return n > 0 ? n : 0;
+  }
+
   function volumenKg(compra) {
-    return parseFloat(String(compra && compra.volumen_Entregado == null ? '' : compra.volumen_Entregado).replace(/[,\s]/g, ''));
+    return numeroPositivo(compra && compra.volumen_Entregado);
+  }
+
+  /* Volumen a declarar al recepcionar: el de la página si es > 0; si no, el despachado. */
+  function volumenRecepcion(html, item) {
+    var pagina = String(matchInput(html, 'idVolumenCompra') || '').trim();
+    if (numeroPositivo(pagina)) return pagina;
+    var despacho = String(item && item.cantidadDespachada || '').trim();
+    return numeroPositivo(despacho) ? despacho : '';
   }
 
   function generarFormatoTraspaso(compra) {
@@ -2342,7 +2355,8 @@
     return apiPost('/GasLP/Recepcion/AceptarRecepcion', 'idEntrega=' + it.idEntrega + '&CodigoRegistro=' + encodeURIComponent(it.codigoRegistro))
       .then(function (det) {
         var h = det.text;
-        var volumen = matchInput(h, 'idVolumenCompra') || it.cantidadDespachada || '';
+        var volumen = volumenRecepcion(h, it);
+        if (!volumen) throw new Error('sin volumen despachado: no se recepcionó para no cerrarla en 0');
         var placas = matchInput(h, 'idPlacas') || CONFIG.PLACAS;
         var idVehiculo = matchInput(h, 'idVehiculo') || it.idVehiculo || '';
         var numReg = matchInput(h, 'idNoRegistroCompra') || it.codigoRegistro;
@@ -3085,6 +3099,7 @@
       cuerpoCerrarCompra: cuerpoCerrarCompra,
       cuerpoDespacho: cuerpoDespacho,
       cuerpoRecepcion: cuerpoRecepcion,
+      volumenRecepcion: volumenRecepcion,
       nombreArchivoTraspaso: nombreArchivoTraspaso,
       generarFormatoTraspaso: generarFormatoTraspaso,
       clasificarFactura: clasificarFactura,
