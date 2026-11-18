@@ -6268,6 +6268,7 @@ function partesFecha(f) {
   var agregadas = [];   /* fechas que metimos en HdFechasActivas, para quitarlas al apagar */
   var reglaVenta = null;    /* {r: regla original} ; r===undefined => no había regla propia */
   var reglaCompra = null;
+  var limites = null;   /* min/max del campo y del datepicker, para devolverlos al apagar */
 
   var panel = ET.ui.tab('stoolkit', 'Fecha', 50, 300);
   panel.innerHTML =
@@ -6319,6 +6320,53 @@ function partesFecha(f) {
       }
       agregadas = [];
     }
+    if (on) soltarLimites();
+    else restaurarLimites();
+  }
+
+  /* Quita el mínimo/máximo del campo y del calendario para poder elegir cualquier fecha pasada. */
+  function opcionesDatepicker() {
+    try {
+      var $c = $(campoFecha);
+      if (!$c.hasClass('hasDatepicker') && !$c.data('datepicker')) return null;
+      return {
+        minDate: $c.datepicker('option', 'minDate'),
+        maxDate: $c.datepicker('option', 'maxDate')
+      };
+    } catch (e) { return null; }
+  }
+
+  function soltarLimites() {
+    var campo = document.querySelector(campoFecha);
+    if (!campo) return;
+    if (!limites) {
+      limites = {
+        min: campo.getAttribute('min'),
+        max: campo.getAttribute('max'),
+        dp: null
+      };
+    }
+    campo.removeAttribute('min');
+    campo.removeAttribute('max');
+    if (!limites.dp) limites.dp = opcionesDatepicker();
+    if (limites.dp) {
+      try { $(campoFecha).datepicker('option', { minDate: null, maxDate: null }); } catch (e) {}
+    }
+  }
+
+  function restaurarLimites() {
+    if (!limites) return;
+    var campo = document.querySelector(campoFecha);
+    if (campo) {
+      if (limites.min === null) campo.removeAttribute('min');
+      else campo.setAttribute('min', limites.min);
+      if (limites.max === null) campo.removeAttribute('max');
+      else campo.setAttribute('max', limites.max);
+    }
+    if (limites.dp) {
+      try { $(campoFecha).datepicker('option', limites.dp); } catch (e) {}
+    }
+    limites = null;
   }
 
   /* Toma la fecha escrita y la hace pasar por los campos ocultos que revisa el sitio */
@@ -6350,7 +6398,7 @@ function partesFecha(f) {
     }
   } catch (e) {}
 
-  $(campoFecha).on('input change blur', function () { if (activo) { aplicar(true); sincronizar(); } });
+  $(campoFecha).on('focus input change blur', function () { if (activo) { aplicar(true); sincronizar(); } });
   if (formEl) formEl.addEventListener('submit', sincronizar, true);
   sw.addEventListener('change', function () {
     activo = sw.checked;
