@@ -1971,8 +1971,12 @@
   }
 
   /* ============ FORMATO DE TRASPASO ============ */
+  function volumenKg(compra) {
+    return parseFloat(String(compra && compra.volumen_Entregado == null ? '' : compra.volumen_Entregado).replace(/[,\s]/g, ''));
+  }
+
   function generarFormatoTraspaso(compra) {
-    var kg = parseFloat(String(compra.volumen_Entregado == null ? '' : compra.volumen_Entregado).replace(/[,\s]/g, ''));
+    var kg = volumenKg(compra);
     if (!(kg > 0)) throw new Error('volumen de entrega vacío');
     var litros = (kg / 0.515).toFixed(0);
     var fecha = compra.fechaCompra || '';
@@ -2479,9 +2483,15 @@
 
   function descargarFormatosRango() {
     var ok = 0;
+    var sinVolumen = 0;
     function moduloDescarga(permiso) {
       return comprasCerradas().then(function (cand) {
-        cand = cand.filter(function (c) { return clasificarFactura(c, null) !== 'abierta'; });
+        cand = cand.filter(function (c) {
+          if (clasificarFactura(c, null) === 'abierta') return false;
+          /* Cerrada sin volumen entregado: no se ha recepcionado, no hay traspaso que imprimir. */
+          if (!(volumenKg(c) > 0)) { sinVolumen++; return false; }
+          return true;
+        });
         progAdd(cand.length);
         return secuencia(cand, function (c) {
           var idx = agregarFacturaCandidata(c, permiso);
@@ -2495,7 +2505,10 @@
       }).catch(function (e) { verboseLog('ERROR MODULO DESCARGA', { error: e.message }); progRender('ERROR: ' + e.message); });
     }
     return runModulo('Formatos', moduloDescarga, '/GasLP/Compras/Index', true).then(function () {
-      if (!STOP) progRender('✔ Descarga terminada · ' + ok + ' formato(s) guardado(s).');
+      if (!STOP) {
+        progRender('✔ Descarga terminada · ' + ok + ' formato(s) guardado(s)' +
+          (sinVolumen ? ' · ' + sinVolumen + ' sin volumen entregado (no recepcionadas)' : '') + '.');
+      }
     });
   }
 

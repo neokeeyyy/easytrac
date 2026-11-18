@@ -346,7 +346,7 @@ test('una fila con HTML de la API lo deja como texto', () => {
   globalThis.document = previo;
 });
 
-test('el PDF normaliza el volumen con comas y rechaza el vacio', function () {
+test('el PDF normaliza el volumen con comas y rechaza el vacio o cero', function () {
   let textos = [];
   const doc = new Proxy({}, {
     get: function (_, k) {
@@ -364,6 +364,7 @@ test('el PDF normaliza el volumen con comas y rechaza el vacio', function () {
   assert.ok(textos.some(function (t) { return t.indexOf('1,942') >= 0; }), '1000 kg son 1942 litros');
 
   assert.throws(function () { acs.generarFormatoTraspaso({ volumen_Entregado: '' }); }, /volumen de entrega vacío/);
+  assert.throws(function () { acs.generarFormatoTraspaso({ volumen_Entregado: '0.00' }); }, /volumen de entrega vacío/);
 });
 
 
