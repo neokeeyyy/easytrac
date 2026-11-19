@@ -88,9 +88,11 @@ function nombreDeEstacion(perm) {
   return (fila && String(fila.nombre || '').trim()) || '';
 }
 
-// Orden fijo de la portada: operación y luego subtipo. La lista usa el mismo
-// comparador para que ambos coincidan aunque el registro llegue en otro orden.
-const ORDEN_OP = ['COMPRA', 'VENTA', 'RECEPCION', 'ENTREGA', 'DESPACHO', 'ACEPTACION', 'INVENTARIO', 'FACTURA', 'PRECIO', 'TRASPASO'];
+// Orden alfabético: operación y luego subtipo. La lista usa el mismo comparador
+// para que la portada y las secciones de impresión coincidan aunque el registro llegue en otro orden.
+function etiquetaOp(r) {
+  return String((r && r.op) || '').toUpperCase();
+}
 
 function etiquetaSubtipo(r) {
   const s = (r && r.sub) || {};
@@ -99,24 +101,19 @@ function etiquetaSubtipo(r) {
     .replace(/\s+/g, ' ').trim().toUpperCase();
 }
 
-function rangoSubtipo(r) {
-  const i = ORDEN_OP.indexOf(String((r && r.op) || '').toUpperCase());
-  return i < 0 ? ORDEN_OP.length : i;
-}
-
 function cmpSubtipo(a, b) {
-  return rangoSubtipo(a) - rangoSubtipo(b) || etiquetaSubtipo(a).localeCompare(etiquetaSubtipo(b));
+  return etiquetaOp(a).localeCompare(etiquetaOp(b)) || etiquetaSubtipo(a).localeCompare(etiquetaSubtipo(b));
 }
 
 // Recuento de la portada por SUBTIPO del listado, con el código de registro de cada
-// acuse. Los subtipos salen en el orden fijo y solo los que tienen acuses.
+// acuse. Los subtipos salen en orden alfabético de operación y subtipo, y solo los que tienen acuses.
 function gruposPorSubtipo(filas) {
   const grupos = [], porNombre = new Map();
   for (const r of filas || []) {
     const label = etiquetaSubtipo(r);
     let g = porNombre.get(label);
     if (!g) {
-      g = { label: label, orden: rangoSubtipo(r), n: 0, codigos: [] };
+      g = { label: label, orden: etiquetaOp(r), n: 0, codigos: [] };
       porNombre.set(label, g);
       grupos.push(g);
     }
@@ -124,7 +121,7 @@ function gruposPorSubtipo(filas) {
     const codigo = String((r && r.nor) || '').trim();
     if (codigo && codigo !== 'SIN_NOR') g.codigos.push(codigo);
   }
-  return grupos.sort((a, b) => (a.orden - b.orden) || a.label.localeCompare(b.label));
+  return grupos.sort((a, b) => a.orden.localeCompare(b.orden) || a.label.localeCompare(b.label));
 }
 
 // Fecha a partes sueltas. La portada recibe el periodo como Date (d1/d2 del análisis),
@@ -245,10 +242,32 @@ function partesFecha(f) {
     return safe(it.tipoAcuse || 'OTROS').toUpperCase() || 'OTROS';
   }
 
-  // Folios que conviene revisar aparte: acuses de aceptación o cadenas con algún volumen en 0.
+  // Folios de compra que conviene revisar aparte: volumen vacío o en 0.
+  // Las aceptaciones siguen yendo a REVISAR_0 y otros ceros se revisan como antes.
+  function volumenVacio(v) {
+    if (v === null || v === undefined) return true;
+    const t = String(v).replace(/[,\s]/g, '');
+    if (t === '') return true;
+    const n = parseFloat(t);
+    return Number.isFinite(n) && n === 0;
+  }
+
+  function camposVolumenVacio(r) {
+    const o = (r && r.c && r.c.o) || {};
+    return Object.keys(o).filter(k => /volumen/i.test(k) && volumenVacio(o[k]));
+  }
+
+  function esErrorCancelado(r) {
+    const deCompra = (r && r.op === 'COMPRA') || /COMPRA/.test(etiquetaSubtipo(r));
+    return deCompra && camposVolumenVacio(r).length > 0;
+  }
+
   function motivoRevision(r) {
     const o = (r && r.c && r.c.o) || {};
     const claves = Object.keys(o);
+    if (esErrorCancelado(r)) {
+      return 'ERRORES CANCELADOS: volumen vacío/0: ' + camposVolumenVacio(r).join(', ');
+    }
     if ((r && r.op === 'ACEPTACION') || claves.some(k => /aceptaci/i.test(k))) return 'aceptación';
     const ceros = claves.filter(k => /volumen/i.test(k) && esCero(o[k]));
     return ceros.length ? 'volumen 0: ' + ceros.join(', ') : '';
@@ -405,7 +424,7 @@ function partesFecha(f) {
 
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision, esErrorCancelado };
   }
 
   // ===================== Arranque DOM =====================
@@ -1191,11 +1210,18 @@ function partesFecha(f) {
       if (cancel) { st('Cancelado'); return; }
 
       const zip = new JSZip(), usados = new Set(), rows = [], extras = new Set(), revisar = [];
-      let fallos = 0;
+      let fallos = 0, cancelados = 0;
       for (const r of inc) {
         if (r.pdfError || !pdfCache.has(r.it.idAcuse)) { fallos++; continue; }
         const motivo = motivoRevision(r);
-        let base = (motivo ? 'REVISAR_0/' : '') + r.carpeta + '/' + r.nombre;
+        const errorCancelado = esErrorCancelado(r);
+        let base;
+        if (errorCancelado) {
+          base = seg(r.perm || 'SIN PERMISO') + '/ERRORES CANCELADOS/' + r.nombre;
+          cancelados++;
+        } else {
+          base = (motivo ? 'REVISAR_0/' : '') + r.carpeta + '/' + r.nombre;
+        }
         if (usados.has(base + '.pdf')) base += '_' + r.it.idAcuse;
         usados.add(base + '.pdf');
         zip.file(base + '.pdf', pdfCache.get(r.it.idAcuse));
@@ -1241,7 +1267,8 @@ function partesFecha(f) {
       const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, m => { st('ZIP ' + m.percent.toFixed(0) + '%'); });
       descargar(blob, 'acuses_' + rangoTag() + '.zip');
       st('ZIP: ' + rows.length + ' PDFs' + (fallos ? ' · ' + fallos + ' sin PDF' : '') +
-        (revisar.length ? ' · ' + revisar.length + ' en REVISAR_0' : '') +
+        (revisar.length - cancelados ? ' · ' + (revisar.length - cancelados) + ' en REVISAR_0' : '') +
+        (cancelados ? ' · ' + cancelados + ' en ERRORES CANCELADOS' : '') +
         (dups.length ? ' · ' + dups.length + ' duplicados omitidos' : '') + (errs.length ? ' · ' + errs.length + ' avisos' : ''));
       } finally { descargando = false; }
     }
@@ -1332,6 +1359,25 @@ function partesFecha(f) {
       }
     }
 
+    // Hoja intermedia entre permisos del PDF combinado (no se usa en Portadas).
+    function hojaSeparador(doc, fuentes, perm, acuses, siguiente) {
+      const p = doc.addPage(PDFLib.PageSizes.A4);
+      const ancho = p.getWidth() - 112;
+      const t = (txt, size, bold, y) => {
+        const font = bold ? fuentes.fb : fuentes.f;
+        let s = size;
+        const w = font.widthOfTextAtSize(txt, s);
+        if (w > ancho) { s = Math.floor(size * ancho / w); }
+        p.drawText(txt, { x: (p.getWidth() - font.widthOfTextAtSize(txt, s)) / 2, y: y, size: s, font: font });
+      };
+      const nombre = x => x === 'SIN_PERMISO' ? 'SIN PERMISO' : x;
+      let y = 720;
+      t('FIN DEL PERMISO', 36, true, y);
+      t(nombre(perm), 36, true, y -= 60);
+      t('ACUSES: ' + acuses, 22, false, y -= 60);
+      t('Continúa: ' + nombre(siguiente), 22, true, y -= 50);
+    }
+
     async function imprimir() {
       if (analizando || descargando) { st('Espera a que termine el trabajo en curso'); return; }
       const inc = seleccionados();
@@ -1346,7 +1392,7 @@ function partesFecha(f) {
       const doc = await PDFLib.PDFDocument.create();
       const f = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
       const fb = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
-      let nAcuses = 0, saltados = 0;
+      let nAcuses = 0, saltados = 0, anterior = null;
 
       for (const { perm, filas: grupo } of ests) {
         st('Uniendo ' + perm + '…');
@@ -1364,6 +1410,9 @@ function partesFecha(f) {
         }
         if (!srcs.length) continue;
 
+        // La hoja queda entre secciones: se añade al empezar la siguiente, no tras la última.
+        if (anterior) hojaSeparador(doc, { f, fb }, anterior.perm, anterior.acuses, perm);
+
         // La portada de cada permiso queda delante de sus respectivos acuses.
         portada(doc, { f, fb }, perm, grupo);
         anexoCodigos(doc, { f, fb }, perm, grupo);
@@ -1373,6 +1422,7 @@ function partesFecha(f) {
           paginas.forEach(pg => doc.addPage(pg));
           nAcuses += paginas.length;
         }
+        anterior = { perm: perm, acuses: grupo.length };
       }
       if (!nAcuses) { st('Ningún PDF se pudo unir'); return; }
 

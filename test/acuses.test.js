@@ -152,7 +152,7 @@ test('permisosDeTabla lee la tabla #example igual que el escáner de traspasos',
   assert.equal(ps[1].id, '222');
 });
 
-test('gruposPorSubtipo cuenta por el subtipo del listado y guarda sus codigos', function () {
+test('gruposPorSubtipo cuenta por subtipo y ordena alfabéticamente por operación y subtipo', function () {
   const filas = [
     { nor: '1001', op: 'VENTA', sub: { texto: 'Venta' } },
     { nor: '1002', op: 'VENTA', sub: { texto: 'VENTA' } },
@@ -161,11 +161,11 @@ test('gruposPorSubtipo cuenta por el subtipo del listado y guarda sus codigos', 
     { nor: 'SIN_NOR', op: 'COMPRA', it: { tipoAcuse: 'Nuevo Registro de Compra' }, sub: { texto: '', sigla: 'NRC' } }
   ];
   const g = api.gruposPorSubtipo(filas);
-  assert.deepEqual(g.map(x => x.label), ['NUEVO REGISTRO DE COMPRA', 'VENTA', 'ACEPTAR REGISTRO DE RECEPCIÓN']);
-  assert.deepEqual(g.map(x => x.n), [2, 2, 1]);
+  assert.deepEqual(g.map(x => x.label), ['NUEVO REGISTRO DE COMPRA', 'ACEPTAR REGISTRO DE RECEPCIÓN', 'VENTA']);
+  assert.deepEqual(g.map(x => x.n), [2, 1, 2]);
   assert.deepEqual(g[0].codigos, ['1004']);
-  assert.deepEqual(g[1].codigos, ['1001', '1002']);
-  assert.deepEqual(g[2].codigos, ['1003']);
+  assert.deepEqual(g[1].codigos, ['1003']);
+  assert.deepEqual(g[2].codigos, ['1001', '1002']);
 });
 
 test('gruposPorSubtipo usa la sigla cuando el subtipo viene vacio', function () {
@@ -174,11 +174,11 @@ test('gruposPorSubtipo usa la sigla cuando el subtipo viene vacio', function () 
     { nor: '2002', sub: { texto: '', sigla: 'CRC' } },
     { nor: '2003', sub: null }
   ]);
-  assert.deepEqual(g.map(x => x.label), ['VENTA', 'CRC', 'SIN TIPO']);
+  assert.deepEqual(g.map(x => x.label), ['CRC', 'SIN TIPO', 'VENTA']);
   assert.deepEqual(g.map(x => x.n), [1, 1, 1]);
 });
 
-test('cmpSubtipo ordena por operacion y luego por subtipo', function () {
+test('cmpSubtipo ordena alfabéticamente por operación y luego por subtipo', function () {
   const filas = [
     { op: 'VENTA', sub: { texto: 'Venta' } },
     { op: 'COMPRA', sub: { texto: 'Nuevo registro de compra' } },
@@ -187,7 +187,7 @@ test('cmpSubtipo ordena por operacion y luego por subtipo', function () {
   ];
   assert.deepEqual(
     filas.slice().sort(api.cmpSubtipo).map(r => r.sub.texto),
-    ['Nuevo registro de compra', 'Aceptar registro de venta', 'Venta', 'Inventario']
+    ['Nuevo registro de compra', 'Inventario', 'Aceptar registro de venta', 'Venta']
   );
 });
 
@@ -276,6 +276,25 @@ test('el prefetch se corta en el tope y pdfCache se poda al pasarse', function (
   assert.equal(podada.size, 120);
   assert.equal(podada.has(0), false);
   assert.equal(podada.has(129), true);
+});
+
+test('esErrorCancelado solo marca compras con volumen vacío o 0', function () {
+  assert.equal(api.esErrorCancelado({ op: 'COMPRA', c: { o: { volumen_Solicitado: '' } } }), true);
+  assert.equal(api.esErrorCancelado({ op: 'COMPRA', c: { o: { volumen_Solicitado: '0' } } }), true);
+  assert.equal(api.esErrorCancelado({ op: 'COMPRA', c: { o: { volumen_Solicitado: '0.00' } } }), true);
+  assert.equal(api.esErrorCancelado({ op: 'COMPRA', c: { o: { volumen_Solicitado: null } } }), true);
+  assert.equal(api.esErrorCancelado({ op: 'OTROS', sub: { texto: 'Nuevo registro de compra' }, c: { o: { volumen_Solicitado: '0' } } }), true);
+  assert.equal(api.esErrorCancelado({ op: 'VENTA', c: { o: { volumen_Solicitado: '0' } } }), false);
+  assert.equal(api.esErrorCancelado({ op: 'COMPRA', c: { o: { volumen_Solicitado: '1,234.5' } } }), false);
+  assert.equal(api.esErrorCancelado({ op: 'COMPRA', c: { o: { fecha: '2026-10-01' } } }), false);
+  assert.equal(api.esErrorCancelado({ op: 'COMPRA' }), false);
+});
+
+test('motivoRevision marca la compra con volumen vacío o 0 como ERRORES CANCELADOS', function () {
+  assert.equal(api.motivoRevision({ op: 'COMPRA', c: { o: { volumen_Solicitado: '' } } }), 'ERRORES CANCELADOS: volumen vacío/0: volumen_Solicitado');
+  assert.equal(api.motivoRevision({ op: 'COMPRA', c: { o: { volumen_Solicitado: '0.00' } } }), 'ERRORES CANCELADOS: volumen vacío/0: volumen_Solicitado');
+  assert.equal(api.motivoRevision({ op: 'COMPRA', c: { o: { volumen_Solicitado: '0', volumen_Entregado: '1,234.5' } } }), 'ERRORES CANCELADOS: volumen vacío/0: volumen_Solicitado');
+  assert.equal(api.motivoRevision({ op: 'COMPRA', c: { o: { volumen_Solicitado: '1,234.5' } } }), '');
 });
 
 test('motivoRevision separa aceptaciones y volumen 0, e ignora vacios', function () {
