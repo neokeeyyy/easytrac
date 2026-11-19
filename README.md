@@ -59,7 +59,7 @@ src/
   50-fecha.js           SToolkit
   60-precios-cne.js     precios máximos CNE para Agregar Precios
   70-traspasos.js       traspasos GLP
-test/                   bun test (168 pruebas)
+test/                   bun test (169 pruebas)
 tools/                  build, syntax, preview, release
 dist/                   bundle y standalone generados
 legacy/                 los 5 userscripts originales
@@ -71,7 +71,7 @@ Los números son el orden de `@require`; no los renombres sin actualizar `tools/
 
 ```powershell
 bun install             # una vez: jsdom, solo para las pruebas
-bun test                # 168 pruebas
+bun test                # 169 pruebas
 bun tools/syntax.mjs
 bun tools/build.mjs     # regenera EasyTrac.user.js, dist/easytrac.bundle.js y el standalone
 bun tools/preview.mjs   # página local tipo SIRETRAC para revisar la interfaz sin datos reales

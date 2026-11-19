@@ -378,6 +378,41 @@ test('los dos traspasos de El Gallo se reconocen aunque traspaso sea false', fun
   }
 });
 
+test('duplicadosEnAcuses señala los ya enviados sin excluirlos del envío', function () {
+  const permit = 'LP/16385/EXP/ES/2016';
+  const acuses = api.extractAcuses({
+    success: true,
+    data: [
+      {
+        codigoRegistro: 'LP/16385/2026/00173',
+        fechaCompra: '2026-10-26',
+        permiso_Vendedor: 'LP/14432/DIST/PLA/2016',
+        volumen_Solicitado: 1343,
+        traspaso: false,
+      },
+    ],
+  });
+  const existing = api.acuseKeys(acuses, permit);
+  const transfers = [
+    {
+      destinationPermit: permit,
+      sourcePermit: 'LP/14432/DIST/PLA/2016',
+      operationDate: '2026-10-26',
+      volumeKg: 1343,
+    },
+    {
+      destinationPermit: permit,
+      sourcePermit: 'LP/14432/DIST/PLA/2016',
+      operationDate: '2026-10-27',
+      volumeKg: 500,
+    },
+  ];
+
+  const repetidos = api.duplicadosEnAcuses(transfers, existing);
+  assert.equal(repetidos.length, 1);
+  assert.equal(repetidos[0].operationDate, '2026-10-26');
+});
+
 test('buildTraspasoBody agrega idVehiculo y TransportePlaca si el traspaso tiene vehiculo', function () {
   const body = api.buildTraspasoBody(
     {

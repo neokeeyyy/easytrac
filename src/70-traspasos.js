@@ -599,6 +599,20 @@
     return keys;
   }
 
+  /* Traspasos que ya aparecen en los acuses del servidor. Se avisan, pero se pueden reenviar. */
+  function duplicadosEnAcuses(transfers, existing) {
+    return (transfers || []).filter(function (transfer) {
+      return existing.has(
+        normalizeKey(
+          transfer.destinationPermit,
+          transfer.operationDate,
+          transfer.volumeKg,
+          transfer.sourcePermit
+        )
+      );
+    });
+  }
+
   // Asigna por orden las estaciones sin destino. Es una sugerencia visible:
   // el envío pide confirmación y el usuario puede corregir cada fila.
   function assignByOrder(entries, permits, sourceId) {
@@ -2161,7 +2175,7 @@
     }
 
     let sent = 0;
-    let skipped = 0;
+    let duplicados = 0;
 
     try {
       for (const group of groupTransfers(state.transfers)) {
@@ -2178,6 +2192,7 @@
           .sort();
         const acuses = await fetchAcuses(permit, dates[0], dates[dates.length - 1]);
         const existing = acuseKeys(acuses, group.permit);
+        const repetidos = duplicadosEnAcuses(group.transfers, existing);
         say(
           'Acuses ' +
             group.permit +
@@ -2185,8 +2200,23 @@
             acuses.length +
             ' registro(s), ' +
             existing.size +
-            ' clave(s) para deduplicar.'
+            ' clave(s) para comparar.'
         );
+        if (repetidos.length) {
+          const seguir = window.confirm(
+            'Aviso: ' +
+              repetidos.length +
+              ' traspaso(s) de ' +
+              group.permit +
+              ' ya aparecen en los acuses del servidor.\n\n' +
+              'Puede que ya se hayan enviado. Si continúas, se enviarán otra vez y podrían quedar duplicados.\n\n' +
+              '¿Enviar de todos modos?'
+          );
+          if (!seguir) {
+            say('Grupo omitido por posibles duplicados: ' + group.permit);
+            continue;
+          }
+        }
 
         for (const transfer of group.transfers) {
           const key = normalizeKey(
@@ -2196,9 +2226,15 @@
             transfer.sourcePermit
           );
           if (existing.has(key)) {
-            skipped += 1;
-            say('Omitido (ya existe): ' + transfer.destinationPermit + ' ' + transfer.operationDate + ' ' + formatKg(transfer.volumeKg));
-            continue;
+            duplicados += 1;
+            say(
+              'Aviso posible duplicado: ' +
+                transfer.destinationPermit +
+                ' ' +
+                transfer.operationDate +
+                ' ' +
+                formatKg(transfer.volumeKg)
+            );
           }
           if (ET.core && ET.core.http && ET.core.http.caida && ET.core.http.caida()) {
             say('Operación cancelada: SIRETRAC no responde.');
@@ -2236,7 +2272,13 @@
           await sleep(CONFIG.sendDelayMs);
         }
       }
-      say('Terminado: ' + sent + ' enviado(s), ' + skipped + ' omitido(s) por acuse existente.');
+      say(
+        'Terminado: ' +
+          sent +
+          ' enviado(s)' +
+          (duplicados ? ' · ' + duplicados + ' posible(s) duplicado(s)' : '') +
+          '.'
+      );
       state.transfers = [];
       renderEnvio();
     } catch (error) {
@@ -3380,6 +3422,7 @@
     extractAcuses: extractAcuses,
     acuseKey: acuseKey,
     acuseKeys: acuseKeys,
+    duplicadosEnAcuses: duplicadosEnAcuses,
     assignByOrder: assignByOrder,
     relatePermits: relatePermits,
     migrateMapping: migrateMapping,
