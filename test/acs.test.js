@@ -377,3 +377,17 @@ test('recepcion usa el volumen despachado si la pagina trae 0', function () {
   assert.equal(acs.volumenRecepcion(cero, {}), '');
   assert.equal(acs.volumenRecepcion('', { cantidadDespachada: '1,234.5' }), '1,234.5');
 });
+
+test('confirmarRecepcionCero pregunta con el folio y respeta la respuesta', function () {
+  const previo = globalThis.confirm;
+  try {
+    let visto = '';
+    globalThis.confirm = (m) => { visto = m; return true; };
+    assert.equal(acs.confirmarRecepcionCero({ codigoRegistro: 'LP/1/2026/1' }), true);
+    assert.match(visto, /LP\/1\/2026\/1/);
+    globalThis.confirm = () => false;
+    assert.equal(acs.confirmarRecepcionCero({ codigoRegistro: 'LP/1/2026/1' }), false);
+  } finally {
+    globalThis.confirm = previo;
+  }
+});

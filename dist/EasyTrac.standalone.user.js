@@ -2351,12 +2351,21 @@
     });
   }
 
+  function confirmarRecepcionCero(it) {
+    var codigo = (it && it.codigoRegistro) || 'sin folio';
+    var win = typeof window !== 'undefined' ? window : globalThis;
+    return !!win.confirm('La compra ' + codigo + ' no trae volumen despachado. Si continúas se recepcionará y cerrará con 0. ¿Registrarla así?');
+  }
+
   function recepcionarUna(it) {
     return apiPost('/GasLP/Recepcion/AceptarRecepcion', 'idEntrega=' + it.idEntrega + '&CodigoRegistro=' + encodeURIComponent(it.codigoRegistro))
       .then(function (det) {
         var h = det.text;
         var volumen = volumenRecepcion(h, it);
-        if (!volumen) throw new Error('sin volumen despachado: no se recepcionó para no cerrarla en 0');
+        if (!volumen) {
+          if (!confirmarRecepcionCero(it)) throw new Error('recepción cancelada: volumen 0');
+          volumen = '0';
+        }
         var placas = matchInput(h, 'idPlacas') || CONFIG.PLACAS;
         var idVehiculo = matchInput(h, 'idVehiculo') || it.idVehiculo || '';
         var numReg = matchInput(h, 'idNoRegistroCompra') || it.codigoRegistro;
@@ -3100,6 +3109,7 @@
       cuerpoDespacho: cuerpoDespacho,
       cuerpoRecepcion: cuerpoRecepcion,
       volumenRecepcion: volumenRecepcion,
+      confirmarRecepcionCero: confirmarRecepcionCero,
       nombreArchivoTraspaso: nombreArchivoTraspaso,
       generarFormatoTraspaso: generarFormatoTraspaso,
       clasificarFactura: clasificarFactura,
@@ -3439,6 +3449,21 @@ function partesFecha(f) {
     return safe(it.tipoAcuse || 'OTROS').toUpperCase() || 'OTROS';
   }
 
+  // Folios que conviene revisar aparte: acuses de aceptación o cadenas con algún volumen en 0.
+  function motivoRevision(r) {
+    const o = (r && r.c && r.c.o) || {};
+    const claves = Object.keys(o);
+    if ((r && r.op === 'ACEPTACION') || claves.some(k => /aceptaci/i.test(k))) return 'aceptación';
+    const ceros = claves.filter(k => /volumen/i.test(k) && esCero(o[k]));
+    return ceros.length ? 'volumen 0: ' + ceros.join(', ') : '';
+  }
+
+  function esCero(v) {
+    if (v === null || v === undefined || String(v).trim() === '') return false;
+    const n = parseFloat(String(v).replace(/[,\s]/g, ''));
+    return Number.isFinite(n) && n === 0;
+  }
+
   // ---------- Sigla del subtipo = VERBO + R + TIPO (ARR, CRC, NRC, RRC, DRC...) ----------
   const PARE = new Set('de del la el los las un una unos unas y o en a al por con para sobre acuse acuses no num numero folio codigo tipo estado solicitud fecha'.split(' '));
   const TIPOS = ('compra C COMPRA|compras C COMPRA|venta V VENTA|ventas V VENTA|recepcion R RECEPCION|recepciones R RECEPCION|' +
@@ -3584,7 +3609,7 @@ function partesFecha(f) {
 
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision };
   }
 
   // ===================== Arranque DOM =====================
@@ -4369,17 +4394,19 @@ function partesFecha(f) {
       await bajarPdfs(inc);
       if (cancel) { st('Cancelado'); return; }
 
-      const zip = new JSZip(), usados = new Set(), rows = [], extras = new Set();
+      const zip = new JSZip(), usados = new Set(), rows = [], extras = new Set(), revisar = [];
       let fallos = 0;
       for (const r of inc) {
         if (r.pdfError || !pdfCache.has(r.it.idAcuse)) { fallos++; continue; }
-        let base = r.carpeta + '/' + r.nombre;
+        const motivo = motivoRevision(r);
+        let base = (motivo ? 'REVISAR_0/' : '') + r.carpeta + '/' + r.nombre;
         if (usados.has(base + '.pdf')) base += '_' + r.it.idAcuse;
         usados.add(base + '.pdf');
         zip.file(base + '.pdf', pdfCache.get(r.it.idAcuse));
         const row = filaCsv(r, base + '.pdf');
         Object.keys(row.extra).forEach(k => { if (FIJAS.indexOf(k) < 0) extras.add(k); });
         rows.push(row);
+        if (motivo) revisar.push({ r, archivo: base + '.pdf', motivo });
       }
 
       const head = FIJAS.concat([...extras]);
@@ -4391,6 +4418,13 @@ function partesFecha(f) {
       const csv = [head.map(q).join(',')].concat(rows.map(row =>
         head.map(k => q(Object.prototype.hasOwnProperty.call(row, k) ? row[k] : (row.extra && row.extra[k]) || '')).join(','))).join('\r\n');
       zip.file('acuses.csv', '\ufeff' + csv);
+
+      if (revisar.length) {
+        const headR = ['idAcuse', 'NOR', 'Folio', 'Tipo', 'Permiso', 'Motivo', 'Archivo'];
+        const limpiar = v => String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
+        zip.file('revisar_0.csv', '\ufeff' + [headR.join('\t')].concat(revisar.map(x =>
+          [x.r.it.idAcuse, x.r.nor, x.r.folio, x.r.op, x.r.perm, x.motivo, x.archivo].map(limpiar).join('\t'))).join('\r\n'));
+      }
 
       const errs = [];
       AVISOS.forEach(t => errs.push('recorrido\t' + t));
@@ -4411,6 +4445,7 @@ function partesFecha(f) {
       const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, m => { st('ZIP ' + m.percent.toFixed(0) + '%'); });
       descargar(blob, 'acuses_' + rangoTag() + '.zip');
       st('ZIP: ' + rows.length + ' PDFs' + (fallos ? ' · ' + fallos + ' sin PDF' : '') +
+        (revisar.length ? ' · ' + revisar.length + ' en REVISAR_0' : '') +
         (dups.length ? ' · ' + dups.length + ' duplicados omitidos' : '') + (errs.length ? ' · ' + errs.length + ' avisos' : ''));
       } finally { descargando = false; }
     }

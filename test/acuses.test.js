@@ -277,3 +277,12 @@ test('el prefetch se corta en el tope y pdfCache se poda al pasarse', function (
   assert.equal(podada.has(0), false);
   assert.equal(podada.has(129), true);
 });
+
+test('motivoRevision separa aceptaciones y volumen 0, e ignora vacios', function () {
+  assert.equal(api.motivoRevision({ op: 'ACEPTACION', c: { o: {} } }), 'aceptación');
+  assert.equal(api.motivoRevision({ op: 'TRASPASO', c: { o: { 'Fecha aceptación': '2026-10-01' } } }), 'aceptación');
+  assert.equal(api.motivoRevision({ op: 'TRASPASO', c: { o: { volumen_Entregado: '0.00' } } }), 'volumen 0: volumen_Entregado');
+  assert.equal(api.motivoRevision({ op: 'TRASPASO', c: { o: { volumen_Solicitado: '825', volumen_Entregado: '0' } } }), 'volumen 0: volumen_Entregado');
+  assert.equal(api.motivoRevision({ op: 'TRASPASO', c: { o: { volumen_Entregado: '' } } }), '');
+  assert.equal(api.motivoRevision({ op: 'TRASPASO', c: { o: { volumen_Entregado: '1,234.5' } } }), '');
+});

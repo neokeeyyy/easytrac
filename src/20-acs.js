@@ -759,12 +759,21 @@
     });
   }
 
+  function confirmarRecepcionCero(it) {
+    var codigo = (it && it.codigoRegistro) || 'sin folio';
+    var win = typeof window !== 'undefined' ? window : globalThis;
+    return !!win.confirm('La compra ' + codigo + ' no trae volumen despachado. Si continúas se recepcionará y cerrará con 0. ¿Registrarla así?');
+  }
+
   function recepcionarUna(it) {
     return apiPost('/GasLP/Recepcion/AceptarRecepcion', 'idEntrega=' + it.idEntrega + '&CodigoRegistro=' + encodeURIComponent(it.codigoRegistro))
       .then(function (det) {
         var h = det.text;
         var volumen = volumenRecepcion(h, it);
-        if (!volumen) throw new Error('sin volumen despachado: no se recepcionó para no cerrarla en 0');
+        if (!volumen) {
+          if (!confirmarRecepcionCero(it)) throw new Error('recepción cancelada: volumen 0');
+          volumen = '0';
+        }
         var placas = matchInput(h, 'idPlacas') || CONFIG.PLACAS;
         var idVehiculo = matchInput(h, 'idVehiculo') || it.idVehiculo || '';
         var numReg = matchInput(h, 'idNoRegistroCompra') || it.codigoRegistro;
@@ -1508,6 +1517,7 @@
       cuerpoDespacho: cuerpoDespacho,
       cuerpoRecepcion: cuerpoRecepcion,
       volumenRecepcion: volumenRecepcion,
+      confirmarRecepcionCero: confirmarRecepcionCero,
       nombreArchivoTraspaso: nombreArchivoTraspaso,
       generarFormatoTraspaso: generarFormatoTraspaso,
       clasificarFactura: clasificarFactura,
