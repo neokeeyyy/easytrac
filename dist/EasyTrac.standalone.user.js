@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.18
+// @version      1.1.19
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.18'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.19'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -3256,7 +3256,7 @@
     return null;
   }
 
-  const ddmmaaaa = d => pad2(d.getDate()) + pad2(d.getMonth() + 1) + d.getFullYear();
+  const ddmmaaaa = d => (d instanceof Date && !isNaN(d)) ? pad2(d.getDate()) + pad2(d.getMonth() + 1) + d.getFullYear() : '00000000';
   const isoFecha = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
   const fTxt = d => (d instanceof Date && !isNaN(d)) ? pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + '/' + d.getFullYear() : '';
   const mismoDia = (a, b) => !!a && !!b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
@@ -3653,9 +3653,17 @@ function partesFecha(f) {
     };
   }
 
+  function esPdf(b) {
+    if (!b || !b.length) return false;
+    const n = Math.min(1024, b.length);
+    let s = '';
+    for (let i = 0; i < n; i++) s += String.fromCharCode(b[i]);
+    return s.indexOf('%PDF-') >= 0;
+  }
+
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision, esErrorCancelado, conTope };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision, esErrorCancelado, conTope, esPdf, ddmmaaaa };
   }
 
   // ===================== Arranque DOM =====================
@@ -3863,14 +3871,6 @@ function partesFecha(f) {
     }
 
     // ---------- PDF (solo al descargar o imprimir; nunca durante el análisis) ----------
-    function esPdf(b) {
-      if (!b || !b.length) return false;
-      const n = Math.min(1024, b.length);
-      let s = '';
-      for (let i = 0; i < n; i++) s += String.fromCharCode(b[i]);
-      return s.indexOf('%PDF-') >= 0;
-    }
-
     // ImprimirAcuse responde una página que arma el PDF con jsPDF y navega al data:;
     // se ejecuta en un iframe y se captura el base64 antes de que navegue.
     let sinkN = 0;
@@ -4181,6 +4181,7 @@ function partesFecha(f) {
       const desde = new Date(d1); desde.setDate(desde.getDate() - 7);   // margen de 7 días
       const hasta = new Date(d2); hasta.setDate(hasta.getDate() + 7);   // margen simétrico: la fecha de operación puede diferir de la de acuse
       const cand = [];
+      const pags = { v: 0, t: 0 };
       const paginaDe = async (pag, p) => {
         const data = { filtro: '', pagina: pag };
         if (p && ESTRAT.modo === 'param') { data.idPermiso = p.id; data.permiso = p.codigo; }
@@ -4459,12 +4460,18 @@ function partesFecha(f) {
     async function bajarPdfs(inc) {
       inc.forEach(r => { r.pdfError = ''; });
       let hechos = 0;
+      progreso('PDFs', 0, inc.length);
       st('PDFs 0/' + inc.length + '…');
       const tarea = async r => {
-        if (caido()) return;
-        try { await pdfDe(r.it); }
-        catch (e) { if (!abortado(e)) r.pdfError = e.message; }
+        if (caido() || cancel) return;
+        try {
+          const b = await pdfDe(r.it);
+          if (!b || !esPdf(b)) throw new Error('PDF inválido o vacío');
+        } catch (e) {
+          if (!abortado(e)) r.pdfError = e.message;
+        }
         hechos++;
+        progreso('PDFs', hechos, inc.length);
         if (hechos % 5 === 0 || hechos === inc.length) st('PDFs ' + hechos + '/' + inc.length + '…');
       };
       // ImprimirAcuse se sirve con el permiso activo en la sesión: se agrupa por permiso
@@ -4502,71 +4509,98 @@ function partesFecha(f) {
       if (typeof JSZip === 'undefined') { st('JSZip no cargó'); return; }
       cancel = false; ctrl = new AbortController(); descargando = true;
       try {
-      await bajarPdfs(inc);
-      if (cancel) { st('Cancelado'); return; }
+        await bajarPdfs(inc);
+        if (cancel) { st('Cancelado'); return; }
 
-      const zip = new JSZip(), usados = new Set(), rows = [], extras = new Set(), revisar = [];
-      let fallos = 0, cancelados = 0;
-      for (const r of inc) {
-        if (r.pdfError || !pdfCache.has(r.it.idAcuse)) { fallos++; continue; }
-        const motivo = motivoRevision(r);
-        const errorCancelado = esErrorCancelado(r);
-        let base;
-        if (errorCancelado) {
-          base = seg(r.perm || 'SIN PERMISO') + '/ERRORES CANCELADOS/' + r.nombre;
-          cancelados++;
-        } else {
-          base = (motivo ? 'REVISAR_0/' : '') + r.carpeta + '/' + r.nombre;
+        const zip = new JSZip(), usados = new Set(), rows = [], extras = new Set(), revisar = [];
+        let fallos = 0, cancelados = 0;
+        for (const r of inc) {
+          const pdfBytes = pdfCache.get(r.it.idAcuse);
+          if (r.pdfError || !pdfBytes || !esPdf(pdfBytes)) {
+            fallos++;
+            if (!r.pdfError) r.pdfError = !pdfBytes ? 'PDF no disponible' : 'PDF corrupto o inválido';
+            continue;
+          }
+          const motivo = motivoRevision(r);
+          const errorCancelado = esErrorCancelado(r);
+          const partes = [];
+          if (errorCancelado) {
+            partes.push(seg(r.perm || 'SIN PERMISO'), 'ERRORES CANCELADOS', r.nombre);
+            cancelados++;
+          } else {
+            if (motivo) partes.push('REVISAR_0');
+            if (r.carpeta) partes.push(...r.carpeta.split('/').filter(Boolean));
+            partes.push(r.nombre);
+          }
+          const base = partes.filter(Boolean).join('/');
+          let archivo = base + '.pdf';
+          if (usados.has(archivo)) {
+            archivo = base + '_' + r.it.idAcuse + '.pdf';
+            let idx = 2;
+            while (usados.has(archivo)) {
+              archivo = base + '_' + r.it.idAcuse + '_' + idx + '.pdf';
+              idx++;
+            }
+          }
+          usados.add(archivo);
+          zip.file(archivo, pdfBytes, { binary: true });
+          const row = filaCsv(r, archivo);
+          Object.keys(row.extra).forEach(k => { if (FIJAS.indexOf(k) < 0) extras.add(k); });
+          rows.push(row);
+          if (motivo) revisar.push({ r, archivo, motivo });
         }
-        if (usados.has(base + '.pdf')) base += '_' + r.it.idAcuse;
-        usados.add(base + '.pdf');
-        zip.file(base + '.pdf', pdfCache.get(r.it.idAcuse));
-        const row = filaCsv(r, base + '.pdf');
-        Object.keys(row.extra).forEach(k => { if (FIJAS.indexOf(k) < 0) extras.add(k); });
-        rows.push(row);
-        if (motivo) revisar.push({ r, archivo: base + '.pdf', motivo });
+
+        const head = FIJAS.concat([...extras]);
+        if (!rows.length) {
+          const motivo = [...new Set(inc.map(r => r.pdfError).filter(Boolean))].slice(0, 2).join(' · ');
+          st('No se pudo bajar ningún PDF' + (motivo ? ': ' + motivo : ''));
+          return;
+        }
+        const csv = [head.map(q).join(',')].concat(rows.map(row =>
+          head.map(k => q(Object.prototype.hasOwnProperty.call(row, k) ? row[k] : (row.extra && row.extra[k] != null ? row.extra[k] : ''))).join(','))).join('\r\n');
+        zip.file('acuses.csv', '\ufeff' + csv);
+
+        if (revisar.length) {
+          const headR = ['idAcuse', 'NOR', 'Folio', 'Tipo', 'Permiso', 'Motivo', 'Archivo'];
+          const limpiar = v => String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
+          zip.file('revisar_0.csv', '\ufeff' + [headR.join('\t')].concat(revisar.map(x =>
+            [x.r.it.idAcuse, x.r.nor, x.r.folio, x.r.op, x.r.perm, x.motivo, x.archivo].map(limpiar).join('\t'))).join('\r\n'));
+        }
+
+        const errs = [];
+        AVISOS.forEach(t => errs.push('recorrido\t' + t));
+        inc.forEach(r => {
+          if (r.error) errs.push(r.it.idAcuse + '\t' + r.error);
+          else if (r.pdfError) errs.push(r.it.idAcuse + '\tPDF: ' + r.pdfError);
+        });
+        inc.forEach(r => {
+          if (r.aprox && r.enRango) errs.push(r.it.idAcuse + '\tfecha de operación aproximada: ' + fTxt(r.fOp) + ' (sin fecha en la cadena distinta de la Fecha Acuse)');
+        });
+        if (errs.length) zip.file('errores.txt', errs.join('\r\n'));
+
+        const dups = filas.filter(r => r.dup && !sel.has(r.n));
+        if (dups.length) zip.file('duplicados_omitidos.txt', 'idAcuse\toperacion\tpermiso\tNOR\tsiglas\tmotivo\r\n' +
+          dups.map(r => [r.it.idAcuse, r.op, r.perm, r.nor, r.sub ? r.sub.sigla : '', r.dupTxt].join('\t')).join('\r\n'));
+
+        progreso('Empaquetando ZIP', 0, 100);
+        st('Empaquetando ZIP…');
+        const blob = await zip.generateAsync(
+          { type: 'blob', compression: 'STORE', streamFiles: true },
+          m => {
+            const pct = Math.round(m.percent);
+            progreso('Empaquetando ZIP', pct, 100);
+            st('Empaquetando ZIP ' + pct + '%');
+          }
+        );
+        descargar(blob, 'acuses_' + rangoTag() + '.zip');
+        st('ZIP: ' + rows.length + ' PDFs' + (fallos ? ' · ' + fallos + ' sin PDF' : '') +
+          (revisar.length - cancelados ? ' · ' + (revisar.length - cancelados) + ' en REVISAR_0' : '') +
+          (cancelados ? ' · ' + cancelados + ' en ERRORES CANCELADOS' : '') +
+          (dups.length ? ' · ' + dups.length + ' duplicados omitidos' : '') + (errs.length ? ' · ' + errs.length + ' avisos' : ''));
+      } finally {
+        descargando = false;
+        const barra = $('#sa-prog'); if (barra) barra.hidden = true;
       }
-
-      const head = FIJAS.concat([...extras]);
-      if (!rows.length) {
-        const motivo = [...new Set(inc.map(r => r.pdfError).filter(Boolean))].slice(0, 2).join(' · ');
-        st('No se pudo bajar ningún PDF' + (motivo ? ': ' + motivo : ''));
-        return;
-      }
-      const csv = [head.map(q).join(',')].concat(rows.map(row =>
-        head.map(k => q(Object.prototype.hasOwnProperty.call(row, k) ? row[k] : (row.extra && row.extra[k]) || '')).join(','))).join('\r\n');
-      zip.file('acuses.csv', '\ufeff' + csv);
-
-      if (revisar.length) {
-        const headR = ['idAcuse', 'NOR', 'Folio', 'Tipo', 'Permiso', 'Motivo', 'Archivo'];
-        const limpiar = v => String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
-        zip.file('revisar_0.csv', '\ufeff' + [headR.join('\t')].concat(revisar.map(x =>
-          [x.r.it.idAcuse, x.r.nor, x.r.folio, x.r.op, x.r.perm, x.motivo, x.archivo].map(limpiar).join('\t'))).join('\r\n'));
-      }
-
-      const errs = [];
-      AVISOS.forEach(t => errs.push('recorrido\t' + t));
-      filas.forEach(r => {
-        if (r.error) errs.push(r.it.idAcuse + '\t' + r.error);
-        else if (r.pdfError) errs.push(r.it.idAcuse + '\tPDF: ' + r.pdfError);
-      });
-      filas.forEach(r => {
-        if (r.aprox && r.enRango) errs.push(r.it.idAcuse + '\tfecha de operación aproximada: ' + fTxt(r.fOp) + ' (sin fecha en la cadena distinta de la Fecha Acuse)');
-      });
-      if (errs.length) zip.file('errores.txt', errs.join('\r\n'));
-
-      const dups = filas.filter(r => r.dup && !sel.has(r.n));
-      if (dups.length) zip.file('duplicados_omitidos.txt', 'idAcuse\toperacion\tpermiso\tNOR\tsiglas\tmotivo\r\n' +
-        dups.map(r => [r.it.idAcuse, r.op, r.perm, r.nor, r.sub ? r.sub.sigla : '', r.dupTxt].join('\t')).join('\r\n'));
-
-      st('Empaquetando ZIP…');
-      const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, m => { st('ZIP ' + m.percent.toFixed(0) + '%'); });
-      descargar(blob, 'acuses_' + rangoTag() + '.zip');
-      st('ZIP: ' + rows.length + ' PDFs' + (fallos ? ' · ' + fallos + ' sin PDF' : '') +
-        (revisar.length - cancelados ? ' · ' + (revisar.length - cancelados) + ' en REVISAR_0' : '') +
-        (cancelados ? ' · ' + cancelados + ' en ERRORES CANCELADOS' : '') +
-        (dups.length ? ' · ' + dups.length + ' duplicados omitidos' : '') + (errs.length ? ' · ' + errs.length + ' avisos' : ''));
-      } finally { descargando = false; }
     }
 
     // ---------- Imprimir: un PDF con portada por estación ----------

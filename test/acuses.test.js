@@ -323,3 +323,16 @@ test('conTope aborta al vencer, propaga el aborto del padre y deja de escuchar t
   await new Promise(r => setTimeout(r, 30));
   assert.equal(suelto.signal.aborted, false);
 });
+
+test('esPdf valida cabecera %PDF- y descarta datos vacios o no PDF', function () {
+  assert.equal(api.esPdf(new TextEncoder().encode('%PDF-1.4 header test')), true);
+  assert.equal(api.esPdf(new TextEncoder().encode('<html>no pdf</html>')), false);
+  assert.equal(api.esPdf(null), false);
+  assert.equal(api.esPdf(new Uint8Array(0)), false);
+});
+
+test('ddmmaaaa formatea fechas validas y cae a 00000000 con invalidas', function () {
+  assert.equal(api.ddmmaaaa(new Date(2026, 10, 19)), '19112026');
+  assert.equal(api.ddmmaaaa(new Date('invalid')), '00000000');
+  assert.equal(api.ddmmaaaa(null), '00000000');
+});

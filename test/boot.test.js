@@ -186,3 +186,26 @@ test('un fallo al guardar en el navegador avisa en pantalla', async () => {
   win.dispatchEvent(new win.CustomEvent('easytrac:store-error'));
   expect(win.document.getElementById('et-upd-aviso').textContent).toContain('No se pudo guardar');
 });
+
+test('analizar acuses no arroja pags is not defined', async () => {
+  const win = await boot('https://siretrac.cne.gob.mx/GasLP/Compras/ListaRegistros', '', undefined, (w) => {
+    w.fetch = async (url) => {
+      if (String(url).includes('Permisos')) {
+        return { status: 200, ok: true, text: async () => '<table id="example"><thead><tr><th>Permiso</th></tr></thead><tbody><tr><td><a href="?idPermiso=1&permiso=LP/1/EXP/ES/2016">LP/1/EXP/ES/2016</a></td></tr></tbody></table>' };
+      }
+      return { status: 200, ok: true, text: async () => '{"item1":{"paginaFinal":1},"item2":[]}', json: async () => ({ item1: { paginaFinal: 1 }, item2: [] }) };
+    };
+  });
+  const d1 = win.document.querySelector('#sa-d1');
+  const d2 = win.document.querySelector('#sa-d2');
+  if (d1 && d2) {
+    d1.value = '2026-11-09';
+    d2.value = '2026-11-15';
+  }
+  const btn = win.document.querySelector('#sa-an');
+  expect(btn).toBeTruthy();
+  btn.click();
+  await new Promise((r) => setTimeout(r, 60));
+  const st = win.document.querySelector('#sa-st');
+  expect(st.textContent).not.toContain('pags is not defined');
+});
