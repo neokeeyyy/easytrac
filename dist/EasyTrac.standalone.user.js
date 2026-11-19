@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.17
+// @version      1.1.18
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.17'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.18'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -2642,6 +2642,14 @@
     tr.tabIndex = 0;
     tr.setAttribute('aria-selected', 'true');
 
+    // Rechazada, aceptada con 0 o volumen que no cuadra: la fila va en rojo y negrita.
+    var solicitado = numeroPositivo(c.volumen_Solicitado);
+    var entregado = numeroPositivo(c.volumen_Entregado);
+    var rechazada = /rechaz/i.test(String(c.estatus || ''));
+    var aceptadaEnCero = Number(c.idEstatus) === 1 && entregado === 0 && solicitado > 0;
+    var volumenIncoherente = solicitado > 0 && entregado > 0 && solicitado !== entregado;
+    if (rechazada || aceptadaEnCero || volumenIncoherente) tr.classList.add('acs-problema');
+
     var tdCheck = document.createElement('td');
     var chk = document.createElement('input');
     chk.type = 'checkbox';
@@ -3089,7 +3097,8 @@
     '#acs-facturas-acciones .acs-opt{flex:1 1 100%;}' +
     '#acs-tabla tbody tr.acs-factura-ok{background:var(--ui-ok-bg);}' +
     '.acs-est.ok{color:var(--ui-ok-fg);}' +
-    '.acs-est.fail,.acs-fail{color:var(--ui-err-fg);}'
+    '.acs-est.fail,.acs-fail{color:var(--ui-err-fg);}' +
+    '#acs-tabla tbody tr.acs-problema,#acs-tabla tbody tr.acs-problema td{color:var(--ui-err-fg);font-weight:bold;}'
   );
 
   // Export para pruebas en Node. En el navegador se ignora.
@@ -3715,7 +3724,13 @@ function partesFecha(f) {
           });
           if (r.status === 401) { const e = new Error('Sesión expirada'); e.fatal = true; throw e; }
           if ((r.status === 429 || r.status >= 500) && k < n) { await esperaFallo(k); continue; }
-          if (!r.ok) throw new Error(url + ' -> ' + r.status);
+          if (!r.ok) {
+            // El cuerpo del 500 suele decir qué parámetro falta; queda en la consola.
+            if (r.status >= 500) {
+              try { console.warn('EasyTrac ' + url + ' ' + r.status, new TextDecoder().decode(await r.arrayBuffer()).slice(0, 600)); } catch (e) { /* sin cuerpo */ }
+            }
+            throw new Error(url + ' -> ' + r.status);
+          }
           // El tope debe cubrir también el cuerpo: fetch resuelve con las cabeceras y,
           // si el cuerpo nunca llega, el ZIP se quedaba esperando para siempre.
           const cuerpo = await r.arrayBuffer();
@@ -4172,37 +4187,32 @@ function partesFecha(f) {
         return (await post(BUSCA, data)).json();
       };
 
-      // La lista viene de más reciente a más antigua. Se piden las páginas en lotes de 4
-      // (sin pausa entre ellas) y se corta al pasar el margen inferior.
-      const pags = { v: 0, t: 0 };   // páginas pedidas / páginas que el barrido va a pedir
+      // Una página a la vez: cuatro en paralelo saturaban BuscaAcuse y devolvía 500.
       const lista = async (p, etiqueta) => {
         let fin = 1, viejas = 0, pag = 1, decl = 0, vistas = 0;
         try {
           while (pag <= fin && !cancel) {
-            const nums = [];
-            for (let k = 0; k < 4 && pag + k <= fin; k++) nums.push(pag + k);
-            const res = await Promise.all(nums.map(n => paginaDe(n, p).then(r => r, e => ({ error: e }))));
-            for (let j = 0; j < res.length; j++) {
-              const r = res[j], n = nums[j];
-              if (r.error) {
-                if (!abortado(r.error)) aviso(etiqueta + ' · página ' + n + ': ' + r.error.message);
-                return;
-              }
-              fin = Math.max(fin, (r.item1 && r.item1.paginaFinal) || 1);
-              if (fin > decl) { pags.t += fin - decl; decl = fin; }
-              const items = r.item2 || [];
-              let maxF = null;
-              for (let i = 0; i < items.length; i++) {
-                const it = items[i], f = dmy(it.fechaAcuse);
-                if (f && (!maxF || f > maxF)) maxF = f;
-                if (!f || f < desde || f > hasta) continue;
-                cand.push({ it, p, orden: n * 1000 + i });
-              }
-              vistas++; pags.v++;
-              progreso(etiqueta + ' · ' + cand.length + ' acuses', pags.v, pags.t);
-              if (!maxF || maxF < desde) { if (++viejas >= 2) return; } else viejas = 0;
+            let r;
+            try { r = await paginaDe(pag, p); }
+            catch (e) {
+              if (!abortado(e)) aviso(etiqueta + ' · página ' + pag + ': ' + e.message);
+              return;
             }
-            pag = nums[nums.length - 1] + 1;
+            fin = Math.max(fin, (r.item1 && r.item1.paginaFinal) || 1);
+            if (fin > decl) { pags.t += fin - decl; decl = fin; }
+            const items = r.item2 || [];
+            let maxF = null;
+            for (let i = 0; i < items.length; i++) {
+              const it = items[i], f = dmy(it.fechaAcuse);
+              if (f && (!maxF || f > maxF)) maxF = f;
+              if (!f || f < desde || f > hasta) continue;
+              cand.push({ it, p, orden: pag * 1000 + i });
+            }
+            vistas++; pags.v++;
+            progreso(etiqueta + ' · ' + cand.length + ' acuses', pags.v, pags.t);
+            if (!maxF || maxF < desde) { if (++viejas >= 2) return; } else viejas = 0;
+            pag++;
+            await sleep(150);
           }
         } finally {
           pags.t -= Math.max(0, decl - vistas);   // páginas que el corte dejó sin pedir

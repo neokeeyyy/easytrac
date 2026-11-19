@@ -1050,6 +1050,14 @@
     tr.tabIndex = 0;
     tr.setAttribute('aria-selected', 'true');
 
+    // Rechazada, aceptada con 0 o volumen que no cuadra: la fila va en rojo y negrita.
+    var solicitado = numeroPositivo(c.volumen_Solicitado);
+    var entregado = numeroPositivo(c.volumen_Entregado);
+    var rechazada = /rechaz/i.test(String(c.estatus || ''));
+    var aceptadaEnCero = Number(c.idEstatus) === 1 && entregado === 0 && solicitado > 0;
+    var volumenIncoherente = solicitado > 0 && entregado > 0 && solicitado !== entregado;
+    if (rechazada || aceptadaEnCero || volumenIncoherente) tr.classList.add('acs-problema');
+
     var tdCheck = document.createElement('td');
     var chk = document.createElement('input');
     chk.type = 'checkbox';
@@ -1497,7 +1505,8 @@
     '#acs-facturas-acciones .acs-opt{flex:1 1 100%;}' +
     '#acs-tabla tbody tr.acs-factura-ok{background:var(--ui-ok-bg);}' +
     '.acs-est.ok{color:var(--ui-ok-fg);}' +
-    '.acs-est.fail,.acs-fail{color:var(--ui-err-fg);}'
+    '.acs-est.fail,.acs-fail{color:var(--ui-err-fg);}' +
+    '#acs-tabla tbody tr.acs-problema,#acs-tabla tbody tr.acs-problema td{color:var(--ui-err-fg);font-weight:bold;}'
   );
 
   // Export para pruebas en Node. En el navegador se ignora.
