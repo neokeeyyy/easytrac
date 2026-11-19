@@ -92,8 +92,9 @@ bun tools/release.mjs patch "solo local" --no-push
 ```
 
 Hace las pruebas, sube la versión en `package.json`, reconstruye, hace commit, crea el tag
-`vX.Y.Z` y empuja con `--follow-tags`. Sin tag en GitHub, jsDelivr no resuelve los módulos:
-por eso el tag viaja junto al push.
+`vX.Y.Z`, empuja con `--follow-tags` y publica el release en GitHub. Sin tag en GitHub,
+jsDelivr no resuelve los módulos: por eso el tag viaja junto al push. Todo tag debe tener
+su release: el script se niega a publicar si `gh` no está autenticado.
 
 Si jsDelivr responde 404 en un módulo recién publicado, es una caché negativa del borde:
 `https://purge.jsdelivr.net/gh/neokeeyyy/easytrac@vX.Y.Z/src/archivo.js` la limpia.

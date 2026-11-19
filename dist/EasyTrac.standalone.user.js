@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.16
+// @version      1.1.17
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.16'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.17'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -3626,9 +3626,27 @@ function partesFecha(f) {
     return null;
   }
 
+  // Tope por petición: una conexión colgada no puede detener el ZIP ni el análisis.
+  function conTope(signal, ms) {
+    const c = new AbortController();
+    const abortar = () => { try { c.abort(); } catch (e) { /* ya abortado */ } };
+    const reloj = setTimeout(abortar, ms);
+    if (signal) {
+      if (signal.aborted) abortar();
+      else signal.addEventListener('abort', abortar, { once: true });
+    }
+    return {
+      signal: c.signal,
+      fin: () => {
+        clearTimeout(reloj);
+        if (signal) signal.removeEventListener('abort', abortar);
+      }
+    };
+  }
+
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision, esErrorCancelado };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision, esErrorCancelado, conTope };
   }
 
   // ===================== Arranque DOM =====================
@@ -3683,23 +3701,32 @@ function partesFecha(f) {
     };
 
     // Red con reintentos. 401 = sesión caducada: no se reintenta.
+    // Cada intento lleva tope: una respuesta que nunca llega no cuelga el trabajo.
+    const TOPE_MS = 30000;
     async function post(url, data, reintentos) {
       const n = reintentos == null ? 2 : reintentos;
       for (let k = 0; ; k++) {
+        const tope = conTope(ctrl.signal, TOPE_MS);
         try {
           const r = await fetch(url, {
-            method: 'POST', credentials: 'include', signal: ctrl.signal,
+            method: 'POST', credentials: 'include', signal: tope.signal,
             headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
             body: new URLSearchParams(data)
           });
           if (r.status === 401) { const e = new Error('Sesión expirada'); e.fatal = true; throw e; }
           if ((r.status === 429 || r.status >= 500) && k < n) { await esperaFallo(k); continue; }
           if (!r.ok) throw new Error(url + ' -> ' + r.status);
-          return r;
+          // El tope debe cubrir también el cuerpo: fetch resuelve con las cabeceras y,
+          // si el cuerpo nunca llega, el ZIP se quedaba esperando para siempre.
+          const cuerpo = await r.arrayBuffer();
+          return new Response(cuerpo, { status: r.status, statusText: r.statusText, headers: r.headers });
         } catch (e) {
-          if (e.fatal || e.name === 'AbortError' || k >= n) throw e;
+          const error = e && e.name === 'AbortError' && !ctrl.signal.aborted
+            ? new Error('sin respuesta del servidor (' + (TOPE_MS / 1000) + ' s)')
+            : e;
+          if (error.fatal || ctrl.signal.aborted || k >= n) throw error;
           await esperaFallo(k);
-        }
+        } finally { tope.fin(); }
       }
     }
 
@@ -3745,12 +3772,14 @@ function partesFecha(f) {
       let doc0 = document;
       let out = permisosDeTabla(doc0);
       if (!out.length) {
+        const tope = conTope(ctrl.signal, 30000);
         try {
           const html = await (await fetch('/OrdenDePedido/Permisos',
-            { credentials: 'include', signal: ctrl.signal })).text();
+            { credentials: 'include', signal: tope.signal })).text();
           doc0 = new DOMParser().parseFromString(html, 'text/html');
           out = permisosDeTabla(doc0);
-        } catch (e) { if (e.name === 'AbortError') throw e; }
+        } catch (e) { if (e.name === 'AbortError' && ctrl.signal.aborted) throw e; }
+        finally { tope.fin(); }
       }
       if (!out.length) out = permisosDeEnlaces(doc0);
       return out;
@@ -3759,7 +3788,9 @@ function partesFecha(f) {
     async function activaPermiso(p) {
       const qs = new URLSearchParams({ idPermiso: p.id, permiso: p.codigo, idPermisionario: '0',
         idPermisoMateria: '0', idPermisoActividad: '0', razonSocial: p.razon || '', estatus: 'False', capacidadOperativa: '0' });
-      await fetch('/OrdenDePedido/SeleccionarPermiso?' + qs, { credentials: 'include', signal: ctrl.signal });
+      const tope = conTope(ctrl.signal, 30000);
+      try { await fetch('/OrdenDePedido/SeleccionarPermiso?' + qs, { credentials: 'include', signal: tope.signal }); }
+      finally { tope.fin(); }
     }
 
     const firma = r => ((r && r.item2) || []).map(i => i.idAcuse).join(',') + '|' + ((r && r.item1 && r.item1.paginaFinal) || 1);
@@ -3768,39 +3799,52 @@ function partesFecha(f) {
     async function detectaEstrategia(permisos, prog) {
       const codigos = new Set(permisos.map(p => p.codigo));
       const pantalla = permisoEnPantalla(codigos);
-      const lee = async extra => (await post(BUSCA, Object.assign({ filtro: '', pagina: 1 }, extra || {}))).json();
-      const fBase = firma(await lee());
+      const lee = async extra => (await post(BUSCA, Object.assign({ filtro: '', pagina: 1 }, extra || {}), 0)).json();
+      if (!permisos.length) return { modo: 'global', activo: null, fBase: null, paginas: {} };
+
+      // Sin permiso en pantalla no hay listado base que comparar, y BuscaAcuse responde
+      // 500 si se consulta antes de activar uno (p. ej. al entrar desde Permisos):
+      // se activa A primero y se compara contra esa lectura.
+      let fBase = null;
+      if (pantalla) {
+        try { fBase = firma(await lee()); }
+        catch (e) {
+          if (abortado(e) || e.fatal) throw e;
+          return { modo: 'sesion', activo: permisos.find(p => p.codigo === pantalla) || null, fBase: null, paginas: {} };
+        }
+      }
+
       const A = permisos.find(p => !pantalla || p.codigo !== pantalla) || permisos[0];
       const B = permisos.find(p => p !== A) || A;
-      if (!A) return { modo: 'global', activo: null, fBase };
-
-      prog('Comprobando si el listado depende del permiso activo…');
-      await activaPermiso(A);
-      const rA = await lee();
-      const fA = firma(rA);
-      const rB = B === A ? rA : (await activaPermiso(B), await lee());
-      const fB = firma(rB);
-      const paginas = {};
-      paginas[A.codigo] = (rA.item1 && rA.item1.paginaFinal) || 1;
-      if (B !== A) paginas[B.codigo] = (rB.item1 && rB.item1.paginaFinal) || 1;
-
       let activo = permisos.find(p => p.codigo === pantalla) || null;
-      if (!activo) activo = (fBase === fA && fA !== fB) ? A : (fBase === fB && fA !== fB) ? B : null;
-      if (!activo && permisos.length === 1) activo = permisos[0];   // un solo permiso: restaurar es seguro
+      try {
+        prog('Comprobando si el listado depende del permiso activo…');
+        await activaPermiso(A);
+        const rA = await lee();
+        const fA = firma(rA);
+        const rB = B === A ? rA : (await activaPermiso(B), await lee());
+        const fB = firma(rB);
+        const paginas = {};
+        paginas[A.codigo] = (rA.item1 && rA.item1.paginaFinal) || 1;
+        if (B !== A) paginas[B.codigo] = (rB.item1 && rB.item1.paginaFinal) || 1;
 
-      let modo;
-      if (fA === fB) modo = 'global';
-      else if (B !== A && firma(await lee({ idPermiso: A.id, permiso: A.codigo })) === fA) modo = 'param';
-      else modo = 'sesion';
+        if (!activo && fBase != null) activo = (fBase === fA && fA !== fB) ? A : (fBase === fB && fA !== fB) ? B : null;
+        if (!activo && permisos.length === 1) activo = permisos[0];   // un solo permiso: restaurar es seguro
 
-      // Restauración SIEMPRE, también en global y param (la detección movió la sesión).
-      if (activo) {
-        try { prog('Restaurando el permiso original…'); await activaPermiso(activo); }
-        catch (e) { if (!abortado(e)) aviso('no se pudo restaurar el permiso: ' + e.message); }
-      } else {
-        aviso('no se pudo saber qué permiso tenías activo: puede quedar otro permiso seleccionado');
+        let modo;
+        if (fA === fB) modo = 'global';
+        else if (B !== A && firma(await lee({ idPermiso: A.id, permiso: A.codigo })) === fA) modo = 'param';
+        else modo = 'sesion';
+        return { modo, activo, fBase, paginas };
+      } finally {
+        // Restauración SIEMPRE: también si una comprobación falló a medias.
+        if (activo) {
+          try { prog('Restaurando el permiso original…'); await activaPermiso(activo); }
+          catch (e) { if (!abortado(e)) aviso('no se pudo restaurar el permiso: ' + e.message); }
+        } else if (pantalla) {
+          aviso('no se pudo saber qué permiso tenías activo: puede quedar otro permiso seleccionado');
+        }
       }
-      return { modo, activo, fBase, paginas };
     }
 
     // ---------- PDF (solo al descargar o imprimir; nunca durante el análisis) ----------
@@ -3863,8 +3907,10 @@ function partesFecha(f) {
       let ultimo = 'no se pudo obtener el PDF';
       for (let i = 0; i < 3; i++) {
         try {
-          // El id va en el cuerpo, como el formulario de SIRETRAC (SendMethodPost).
-          const r = await post('/GasLP/Administracion/ImprimirAcuse', { idAcuse: it.idAcuse }, 0);
+          // El botón de SIRETRAC manda el id en la URL y el formulario en el cuerpo:
+          // se manda en ambos para no depender de cuál lea el servidor.
+          const id = encodeURIComponent(it.idAcuse);
+          const r = await post('/GasLP/Administracion/ImprimirAcuse?idAcuse=' + id, { idAcuse: it.idAcuse }, 0);
           const b = new Uint8Array(await r.arrayBuffer());
           if (esPdf(b)) return b;
           let html = '';
@@ -3900,13 +3946,17 @@ function partesFecha(f) {
       idbP = new Promise((ok, no) => {
         if (typeof indexedDB === 'undefined') { no(new Error('sin IndexedDB')); return; }
         const p = indexedDB.open(IDB_BASE, 2);
+        const reloj = setTimeout(() => no(new Error('IndexedDB no respondió')), 5000);
+        const termina = (fn, v) => { clearTimeout(reloj); fn(v); };
         p.onupgradeneeded = () => {
           const d = p.result;
           if (!d.objectStoreNames.contains(IDB_ALMACEN)) d.createObjectStore(IDB_ALMACEN);
           if (!d.objectStoreNames.contains(IDB_CADENAS)) d.createObjectStore(IDB_CADENAS);
         };
-        p.onsuccess = () => ok(p.result);
-        p.onerror = () => no(p.error || new Error('IndexedDB no abrió'));
+        p.onsuccess = () => termina(ok, p.result);
+        p.onerror = () => termina(no, p.error || new Error('IndexedDB no abrió'));
+        // Otra pestaña con la versión anterior deja el open bloqueado para siempre.
+        p.onblocked = () => termina(no, new Error('IndexedDB bloqueado por otra pestaña'));
       });
       return idbP;
     }
@@ -3915,13 +3965,22 @@ function partesFecha(f) {
       let d;
       try { d = await idb(); } catch (e) { return null; }
       return new Promise(ok => {
+        let listo = false, reloj = 0;
+        const termina = v => {
+          if (listo) return;
+          listo = true;
+          clearTimeout(reloj);
+          ok(v);
+        };
+        // Una transacción atascada no debe colgar el ZIP: sin caché se sigue por red.
+        reloj = setTimeout(() => termina(null), 10000);
         try {
           const tx = d.transaction(almacen || IDB_ALMACEN, verbo);
           const req = fn(tx.objectStore(almacen || IDB_ALMACEN));
-          req.onsuccess = () => ok(req.result == null ? null : req.result);
-          req.onerror = () => ok(null);
-          tx.onabort = () => ok(null);
-        } catch (e) { ok(null); }
+          req.onsuccess = () => termina(req.result == null ? null : req.result);
+          req.onerror = () => termina(null);
+          tx.onabort = () => termina(null);
+        } catch (e) { termina(null); }
       });
     }
 
@@ -4241,7 +4300,9 @@ function partesFecha(f) {
       st('Listo: ' + filas.length + ' acuses · ' + sel.size + ' seleccionados' +
         (nAprox ? ' · ' + nAprox + ' con fecha aprox.' : '') +
         (AVISOS.length ? ' · ' + AVISOS.length + ' aviso(s)' : ''));
-      prefetch(filas);
+      // En modo sesión el PDF depende del permiso activo: el prefetch en segundo plano
+      // bajaría con el último permiso y competiría con el ZIP. Se baja al pedirlo.
+      if (ESTRAT.modo !== 'sesion') prefetch(filas);
     }
 
     // ---------- Selección y filtro ----------
@@ -4389,13 +4450,34 @@ function partesFecha(f) {
       inc.forEach(r => { r.pdfError = ''; });
       let hechos = 0;
       st('PDFs 0/' + inc.length + '…');
-      await pool(inc, WORKERS, async r => {
+      const tarea = async r => {
         if (caido()) return;
         try { await pdfDe(r.it); }
         catch (e) { if (!abortado(e)) r.pdfError = e.message; }
         hechos++;
         if (hechos % 5 === 0 || hechos === inc.length) st('PDFs ' + hechos + '/' + inc.length + '…');
-      });
+      };
+      // ImprimirAcuse se sirve con el permiso activo en la sesión: se agrupa por permiso
+      // y se activa cada uno antes de bajar sus PDFs (también al imprimir).
+      if (ESTRAT.modo === 'sesion' && inc.some(r => r.p)) {
+        const por = new Map();
+        inc.forEach(r => {
+          const k = r.p ? r.p.id + '|' + r.p.codigo : '';
+          if (!por.has(k)) por.set(k, { p: r.p, filas: [] });
+          por.get(k).filas.push(r);
+        });
+        try {
+          for (const g of por.values()) {
+            if (cancel || caido()) break;
+            if (g.p) await activaPermiso(g.p);
+            await pool(g.filas, WORKERS, tarea);
+          }
+        } finally {
+          if (ESTRAT.activo) { try { await activaPermiso(ESTRAT.activo); } catch (e) { /* abortado o sesión caída */ } }
+        }
+      } else {
+        await pool(inc, WORKERS, tarea);
+      }
       if (caido() && !cancel) {
         aviso(MSG_CAIDA);
         st(MSG_CAIDA);

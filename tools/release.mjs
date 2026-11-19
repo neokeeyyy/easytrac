@@ -1,4 +1,4 @@
-/* Release: bump the version, rebuild, commit, tag and push.
+/* Release: bump the version, rebuild, commit, tag, push and publish the GitHub release.
    bun tools/release.mjs patch "mensaje"      (minor | major | x.y.z)
    Flags: --no-push (only commit and tag), --skip-checks */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -37,6 +37,12 @@ try {
   throw new Error('falta identidad de git. Ejecuta:\n  git config --global user.email "tu@correo"\n  git config --global user.name "Tu Nombre"');
 }
 
+/* Todo tag debe tener su release: sin gh no se publica nada. */
+if (!noPush) {
+  try { execSync('gh auth status', { stdio: 'pipe' }); }
+  catch (e) { throw new Error('gh no está instalado o autenticado; el tag quedaría sin release. Ejecuta: gh auth login'); }
+}
+
 if (!flags.includes('--skip-checks')) {
   run('bun tools/syntax.mjs');
   run('bun test');
@@ -46,7 +52,8 @@ pkg.version = version;
 writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n', 'utf8');
 run('bun tools/build.mjs');
 
-run(GIT + ' add -A');
+/* PRECIOS.CNE.user.js es un archivo local sin trackear: no debe viajar en el release. */
+run(GIT + ' add -A -- . ":(exclude)PRECIOS.CNE.user.js"');
 run(GIT + ' commit -m "chore(release): ' + tag + ' ' + message.replace(/"/g, "'") + '"');
 run(GIT + ' tag -a ' + tag + ' -m "' + tag + ': ' + message.replace(/"/g, "'") + '"');
 
@@ -54,5 +61,6 @@ if (noPush) {
   console.log('\nListo en local: ' + tag + '. Publica con: git push --follow-tags');
 } else {
   run(GIT + ' push --follow-tags');
-  console.log('\nPublicado ' + tag + '. Tampermonkey lo verá en su próxima revisión (24 h) o con "Buscar actualizaciones".');
+  run('gh release create ' + tag + ' --title "' + tag + '" --generate-notes');
+  console.log('\nPublicado ' + tag + ': push, tag y release de GitHub. Tampermonkey lo verá en su próxima revisión (24 h) o con "Buscar actualizaciones".');
 }

@@ -305,3 +305,21 @@ test('motivoRevision separa aceptaciones y volumen 0, e ignora vacios', function
   assert.equal(api.motivoRevision({ op: 'TRASPASO', c: { o: { volumen_Entregado: '' } } }), '');
   assert.equal(api.motivoRevision({ op: 'TRASPASO', c: { o: { volumen_Entregado: '1,234.5' } } }), '');
 });
+
+test('conTope aborta al vencer, propaga el aborto del padre y deja de escuchar tras fin()', async function () {
+  const vence = api.conTope(null, 10);
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(vence.signal.aborted, true);
+  vence.fin();
+
+  const padre = new AbortController();
+  const ligado = api.conTope(padre.signal, 1000);
+  padre.abort();
+  assert.equal(ligado.signal.aborted, true);
+  ligado.fin();
+
+  const suelto = api.conTope(new AbortController().signal, 10);
+  suelto.fin();
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(suelto.signal.aborted, false);
+});
