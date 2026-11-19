@@ -279,6 +279,79 @@ function partesFecha(f) {
     return Number.isFinite(n) && n === 0;
   }
 
+  function esRechazo(r) {
+    if (!r) return false;
+    if (/rechaz/i.test(String(r.op || ''))) return true;
+    if (/rechaz/i.test(etiquetaSubtipo(r))) return true;
+    if (/rechaz/i.test(String(r.estadoCadena || ''))) return true;
+    if (r.it && (/rechaz/i.test(String(r.it.tipoAcuse || '')) || /rechaz/i.test(String(r.it.estatus || '')))) return true;
+    const o = (r.c && r.c.o) || {};
+    return Object.values(o).some(v => /rechaz/i.test(String(v)));
+  }
+
+  function esCompraCero(r) {
+    if (!r) return false;
+    const deCompra = (r.op === 'COMPRA') || /COMPRA/i.test(etiquetaSubtipo(r));
+    if (!deCompra) return false;
+    if (esErrorCancelado(r)) return true;
+    const o = (r.c && r.c.o) || {};
+    const clavesVol = Object.keys(o).filter(k => /volumen/i.test(k));
+    if (clavesVol.length > 0 && clavesVol.every(k => volumenVacio(o[k]) || esCero(o[k]))) return true;
+    return false;
+  }
+
+  function volumenDeAcuse(r) {
+    const o = (r && r.c && r.c.o) || {};
+    for (const k of Object.keys(o)) {
+      if (/volumen/i.test(k)) {
+        const v = o[k];
+        if (v !== null && v !== undefined && String(v).trim() !== '') {
+          const n = parseFloat(String(v).replace(/[,\s]/g, ''));
+          if (Number.isFinite(n)) return n;
+        }
+      }
+    }
+    return null;
+  }
+
+  function tieneVolumenIncoherente(r) {
+    const o = (r && r.c && r.c.o) || {};
+    const solKey = Object.keys(o).find(k => /volumen.*solicit/i.test(k));
+    const entKey = Object.keys(o).find(k => /volumen.*(entreg|despach|recep)/i.test(k));
+    if (solKey && entKey) {
+      const sol = parseFloat(String(o[solKey] || '').replace(/[,\s]/g, ''));
+      const ent = parseFloat(String(o[entKey] || '').replace(/[,\s]/g, ''));
+      if (Number.isFinite(sol) && Number.isFinite(ent) && sol > 0 && ent > 0 && sol !== ent) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function esProblema(r, grupo) {
+    if (!r) return false;
+    if (esCompraCero(r) || esRechazo(r) || tieneVolumenIncoherente(r) || esErrorCancelado(r)) return true;
+    const nor = String(r.nor || '').trim();
+    if (nor && nor !== 'SIN_NOR' && Array.isArray(grupo)) {
+      const iguales = grupo.filter(x => String(x && x.nor || '').trim() === nor);
+      if (iguales.length > 1) {
+        if (iguales.some(x => esCompraCero(x) || esRechazo(x) || tieneVolumenIncoherente(x) || esErrorCancelado(x))) return true;
+        const vols = iguales.map(volumenDeAcuse).filter(v => v !== null);
+        if (new Set(vols).size > 1) return true;
+      }
+    }
+    return false;
+  }
+
+  function identificarProblemas(filas) {
+    const problemas = [], normales = [];
+    for (const r of filas || []) {
+      if (esProblema(r, filas)) problemas.push(r);
+      else normales.push(r);
+    }
+    return { normales, problemas };
+  }
+
   // ---------- Sigla del subtipo = VERBO + R + TIPO (ARR, CRC, NRC, RRC, DRC...) ----------
   const PARE = new Set('de del la el los las un una unos unas y o en a al por con para sobre acuse acuses no num numero folio codigo tipo estado solicitud fecha'.split(' '));
   const TIPOS = ('compra C COMPRA|compras C COMPRA|venta V VENTA|ventas V VENTA|recepcion R RECEPCION|recepciones R RECEPCION|' +
@@ -450,7 +523,7 @@ function partesFecha(f) {
 
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision, esErrorCancelado, conTope, esPdf, ddmmaaaa };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision, esErrorCancelado, conTope, esPdf, ddmmaaaa, esRechazo, esCompraCero, volumenDeAcuse, tieneVolumenIncoherente, esProblema, identificarProblemas };
   }
 
   // ===================== Arranque DOM =====================
@@ -1440,8 +1513,40 @@ function partesFecha(f) {
       for (const g of gruposPorSubtipo(filas)) t('•  ' + g.label + ' (' + g.n + ')', 14, true, 56, y -= 28);
     }
 
+    // Separador para mostrar errores/cancelados: mismo formato que la portada pero 50% más compacto.
+    function portadaProblemas(doc, fuentes, perm, filas) {
+      let p = doc.addPage(PDFLib.PageSizes.A4);
+      const ancho = p.getWidth() - 112;
+      const t = (txt, size, bold, x, y) => {
+        const font = bold ? fuentes.fb : fuentes.f;
+        let s = size;
+        const w = font.widthOfTextAtSize(txt, s);
+        if (w > ancho) { s = Math.floor(size * ancho / w); }
+        const px = x === 'center' ? (p.getWidth() - font.widthOfTextAtSize(txt, s)) / 2 : x;
+        p.drawText(txt, { x: px, y: y, size: s, font: font });
+      };
+      const f1 = partesFecha(periodo ? periodo.d1 : filas[0].fOp);
+      const f2 = partesFecha(periodo ? periodo.d2 : filas[filas.length - 1].fOp);
+      const razon = (filas.map(r => (r.p && r.p.razon) || r.razon || '').find(Boolean) || 'SIN_DATO');
+      const estacion = nombreDeEstacion(perm) || razon;
+      const mes = MESES3[f1.m - 1] || '';
+      const iso = semanaISO(new Date(f1.a || 2000, (f1.m || 1) - 1, f1.d || 1));
+      const semanaAno = Number(iso.split('-W')[1]);
+      const anioISO = iso.split('-W')[0];
+      let y = 760;
+      t('ERRORES / CANCELADOS / RECHAZADOS', 18, true, 'center', y);
+      t(perm === 'SIN_PERMISO' ? 'SIN PERMISO' : perm, 18, true, 'center', y -= 26);
+      t(estacion, 18, true, 'center', y -= 25);
+      t('PERIODO ' + String(f1.d).padStart(2, '0') + ' ' + mes + ' – ' + String(f2.d).padStart(2, '0') + ' ' + (MESES3[f2.m - 1] || ''), 13, false, 56, y -= 33);
+      t('SEMANA ' + semanaAno + ' DEL AÑO ' + anioISO, 11, true, 56, y -= 28);
+      t('RAZÓN SOCIAL: ' + razon, 11, true, 56, y -= 23);
+      t('ACUSES CON ERROR / CANCELADOS: ' + filas.length, 11, false, 56, y -= 23);
+      y -= 15;
+      for (const g of gruposPorSubtipo(filas)) t('•  ' + g.label + ' (' + g.n + ')', 9, true, 56, y -= 14);
+    }
+
     // Hoja anexa a la portada: los códigos de registro de cada subtipo, en 10 pt.
-    function anexoCodigos(doc, fuentes, perm, filas) {
+    function anexoCodigos(doc, fuentes, perm, filas, titulo) {
       let p = doc.addPage(PDFLib.PageSizes.A4);
       const ancho = p.getWidth() - 112;
       const t = (txt, size, bold, x, yy) => {
@@ -1454,7 +1559,7 @@ function partesFecha(f) {
       };
       const salta = () => { p = doc.addPage(PDFLib.PageSizes.A4); y = 800; };
       let y = 790;
-      t('CÓDIGOS DE REGISTRO', 16, true, 56, y);
+      t(titulo || 'CÓDIGOS DE REGISTRO', 16, true, 56, y);
       t(perm === 'SIN_PERMISO' ? 'SIN PERMISO' : perm, 12, false, 56, y -= 26);
       y -= 34;
       for (const g of gruposPorSubtipo(filas)) {
@@ -1462,7 +1567,8 @@ function partesFecha(f) {
         t('•  ' + g.label + ' (' + g.n + ')', 12, true, 56, y);
         y -= 18;
         let linea = '';
-        for (const codigo of g.codigos) {
+        const codigos = (g.codigos || []).slice().sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+        for (const codigo of codigos) {
           const prueba = linea ? linea + '    ' + codigo : codigo;
           if (linea && fuentes.f.widthOfTextAtSize(prueba, 10) > ancho - 22) {
             t(linea, 10, false, 76, y);
@@ -1514,31 +1620,49 @@ function partesFecha(f) {
       for (const { perm, filas: grupo } of ests) {
         st('Uniendo ' + perm + '…');
 
-        // Se cargan primero los PDFs del grupo: si ninguno se puede leer no se
-        // añade su portada, para no dejar secciones sin acuses.
-        const srcs = [];
-        for (const r of grupo) {
-          const bytes = pdfCache.get(r.it.idAcuse);
-          if (!bytes) { saltados++; continue; }
-          try {
-            const src = await PDFLib.PDFDocument.load(bytes);
-            srcs.push(src);
-          } catch (e) { saltados++; r.pdfError = 'PDF ilegible: ' + e.message; }
-        }
-        if (!srcs.length) continue;
+        const { normales, problemas } = identificarProblemas(grupo);
+        const cargarSrcs = async (lista) => {
+          const res = [];
+          for (const r of lista) {
+            const bytes = pdfCache.get(r.it.idAcuse);
+            if (!bytes) { saltados++; continue; }
+            try {
+              const src = await PDFLib.PDFDocument.load(bytes);
+              res.push(src);
+            } catch (e) { saltados++; r.pdfError = 'PDF ilegible: ' + e.message; }
+          }
+          return res;
+        };
+
+        const srcsNorm = await cargarSrcs(normales);
+        const srcsProb = await cargarSrcs(problemas);
+        if (!srcsNorm.length && !srcsProb.length) continue;
 
         // La hoja queda entre secciones: se añade al empezar la siguiente, no tras la última.
         if (anterior) hojaSeparador(doc, { f, fb }, anterior.perm, anterior.acuses, perm);
 
-        // La portada de cada permiso queda delante de sus respectivos acuses.
-        portada(doc, { f, fb }, perm, grupo);
-        anexoCodigos(doc, { f, fb }, perm, grupo);
-
-        for (const src of srcs) {
-          const paginas = await doc.copyPages(src, src.getPageIndices());
-          paginas.forEach(pg => doc.addPage(pg));
-          nAcuses += paginas.length;
+        // 1. Bloque principal: acuses normales
+        if (srcsNorm.length) {
+          portada(doc, { f, fb }, perm, normales);
+          anexoCodigos(doc, { f, fb }, perm, normales);
+          for (const src of srcsNorm) {
+            const paginas = await doc.copyPages(src, src.getPageIndices());
+            paginas.forEach(pg => doc.addPage(pg));
+            nAcuses += paginas.length;
+          }
         }
+
+        // 2. Bloque final de errores/cancelados: separador compacto, segundo anexo y PDFs
+        if (srcsProb.length) {
+          portadaProblemas(doc, { f, fb }, perm, problemas);
+          anexoCodigos(doc, { f, fb }, perm, problemas, 'CÓDIGOS DE REGISTRO · ERRORES / CANCELADOS / RECHAZADOS');
+          for (const src of srcsProb) {
+            const paginas = await doc.copyPages(src, src.getPageIndices());
+            paginas.forEach(pg => doc.addPage(pg));
+            nAcuses += paginas.length;
+          }
+        }
+
         anterior = { perm: perm, acuses: grupo.length };
       }
       if (!nAcuses) { st('Ningún PDF se pudo unir'); return; }
@@ -1560,8 +1684,15 @@ function partesFecha(f) {
         const f = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
         const fb = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
         for (const { perm, filas: grupo } of ests) {
-          portada(doc, { f, fb }, perm, grupo);
-          anexoCodigos(doc, { f, fb }, perm, grupo);
+          const { normales, problemas } = identificarProblemas(grupo);
+          if (normales.length) {
+            portada(doc, { f, fb }, perm, normales);
+            anexoCodigos(doc, { f, fb }, perm, normales);
+          }
+          if (problemas.length) {
+            portadaProblemas(doc, { f, fb }, perm, problemas);
+            anexoCodigos(doc, { f, fb }, perm, problemas, 'CÓDIGOS DE REGISTRO · ERRORES / CANCELADOS / RECHAZADOS');
+          }
         }
         descargar(new Blob([await doc.save()], { type: 'application/pdf' }), 'portadas_' + rangoTag() + '.pdf');
         st('Portadas: ' + ests.length + ' estación(es) · ' + doc.getPageCount() + ' páginas');

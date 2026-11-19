@@ -6,7 +6,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.19'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.20'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -1755,8 +1755,12 @@
   function actualizarResumen() {
     var summary = document.querySelector('#acs-summary');
     if (!summary) return;
-    var rows = document.querySelectorAll('#acs-tabla tbody tr').length;
-    var selected = document.querySelectorAll('#acs-tabla tbody input[type="checkbox"]:checked').length;
+    var tbodies = document.querySelectorAll('.acs-tabla-sec tbody');
+    var rows = 0, selected = 0;
+    for (var i = 0; i < tbodies.length; i++) {
+      rows += tbodies[i].querySelectorAll('tr').length;
+      selected += tbodies[i].querySelectorAll('input[type="checkbox"]:checked').length;
+    }
     summary.textContent = rows + ' visibles · ' + selected + ' de ' + rows + ' seleccionadas';
   }
 
@@ -2187,7 +2191,10 @@
     return secuencia(items, function (x) {
       var fila = modulo ? nuevaFila(modulo, permiso, x.codigoRegistro) : null;
       return accion(x).then(function (r) {
-        if (fila) fila.set(r.ok ? 'OK' : 'FALLO', r.msg);
+        if (fila) {
+          fila.set(r.ok ? 'OK' : 'FALLO', r.msg);
+          if (r.aceptadaEnCero && fila.tr) fila.tr.classList.add('acs-problema');
+        }
         progStep(verbo + ' ' + x.codigoRegistro + ' → ' + (r.ok ? 'OK' : 'FALLO') + (r.msg ? ' · ' + r.msg : ''));
       }).catch(function (e) {
         if (fila) fila.set('FALLO', e.message);
@@ -2218,7 +2225,14 @@
           cuerpoGuardarAceptar(f, mc[1], mv[1]));
       })
       .then(function (res) {
-        if (res.json && res.json.result === true) return { ok: true, msg: '' };
+        if (res.json && res.json.result === true) {
+          /* Detectar si la aceptación resultó con volumen 0 (fallo silencioso del servidor). */
+          var vol = res.json && (res.json.volumen_Aceptado || res.json.volumen || res.json.cantidad || 0);
+          if (vol !== undefined && Number(vol) === 0) {
+            return { ok: true, msg: 'AVISO: aceptada con volumen 0', aceptadaEnCero: true };
+          }
+          return { ok: true, msg: '' };
+        }
         return { ok: false, msg: (res.json && (res.json.mensaje || res.json.message)) || res.text.slice(0, 200) };
       });
   }
@@ -2447,7 +2461,7 @@
   }
 
   function marcarFilaFactura(idx, ok) {
-    var ch = document.querySelector('.acs-factura-check[data-idx="' + idx + '"]');
+    var ch = document.querySelector('#acs-tabla-facturas .acs-factura-check[data-idx="' + idx + '"]');
     if (!ch) return;
     ch.checked = false;
     ch.disabled = true;
@@ -2663,7 +2677,8 @@
     }
     if (opts.estado) tr.appendChild(celdaTexto(opts.estado, 'acs-fact-estado'));
 
-    document.querySelector('#acs-tabla tbody').appendChild(tr);
+    var tb = tbodyActivo() || document.querySelector('.acs-tabla-sec tbody');
+    if (tb) tb.appendChild(tr);
     actualizarResumen();
     return tr;
   }
@@ -2693,10 +2708,12 @@
     var tr = document.createElement('tr');
     tr.innerHTML = '<td>' + modulo + '</td><td>' + (permiso ? nombrePermiso(permiso) : 'actual') + '</td><td>' + registro + '</td>' +
       '<td class="acs-est pend">…</td><td class="acs-det"></td>';
-    document.querySelector('#acs-tabla tbody').appendChild(tr);
+    var tb = tbodyActivo() || document.querySelector('.acs-tabla-sec tbody');
+    if (tb) tb.appendChild(tr);
     var est = tr.querySelector('.acs-est');
     var det = tr.querySelector('.acs-det');
     return {
+      tr: tr,
       set: function (e, d) {
         est.textContent = e;
         est.className = 'acs-est ' + (e === 'OK' ? 'ok' : e === 'FALLO' ? 'fail' : 'pend');
@@ -2705,8 +2722,11 @@
     };
   }
 
-  function limpiarTabla() {
-    document.querySelector('#acs-tabla tbody').innerHTML = '';
+  function limpiarTabla(tab) {
+    /* Sin argumento limpia todas las tablas de la sección activa. */
+    var sels = tab ? ['#acs-tabla-' + (TABLA_POR_TAB[tab] || tab) + ' tbody'] :
+      ['#acs-tabla-inicio tbody', '#acs-tabla-aceptar tbody', '#acs-tabla-cerrar tbody', '#acs-tabla-facturas tbody'];
+    sels.forEach(function (s) { var el = document.querySelector(s); if (el) el.innerHTML = ''; });
     candidatos = [];
     facturasCandidatas = [];
     actualizarResumen();
@@ -2721,7 +2741,7 @@
     STOP = false;
     return (contextUrl ? fetch(contextUrl, { credentials: 'same-origin' }) : Promise.resolve()).then(function () {
       // Despachar y Recepcionar no deben borrar la lista ni sus selecciones al iniciar.
-      if (nombre !== 'Despachar' && nombre !== 'Recepcionar') limpiarTabla();
+      if (nombre !== 'Despachar' && nombre !== 'Recepcionar') limpiarTabla(tabActiva);
       progReset();
       progRender('Iniciando ' + nombre + ' | ' + CONFIG.DESDE + ' a ' + CONFIG.HASTA);
       verboseLog('MODULO', { nombre: nombre, desde: CONFIG.DESDE, hasta: CONFIG.HASTA, permiso: CONFIG.PERMISO_FILTRO || 'Todos' });
@@ -2808,6 +2828,13 @@
 
   /* ============ UI ============ */
   var tabActiva = 'inicio';
+  /* Tabla activa según tab; cada sección tiene su propio tbody. */
+  var TABLA_POR_TAB = {
+    inicio: 'inicio', aceptar: 'aceptar', despachar: 'aceptar',
+    recepcionar: 'aceptar', cerrar: 'cerrar', facturas: 'facturas'
+  };
+  function tablaActiva() { return 'acs-tabla-' + (TABLA_POR_TAB[tabActiva] || 'inicio'); }
+  function tbodyActivo() { return document.querySelector('#' + tablaActiva() + ' tbody'); }
 
   function buildUI() {
     cargarUI();
@@ -2854,7 +2881,12 @@
       '  <div id="acs-status" role="status" aria-live="polite">Listo.</div>' +
       '  <div id="acs-prog"><div id="acs-bar-fill"></div><span id="acs-prog-text">0 / 0</span></div>' +
       '  <div id="acs-summary">0 visibles · 0 de 0 seleccionadas</div>' +
-      '  <div id="acs-tabla-wrap"><table id="acs-tabla"><thead id="acs-thead"></thead><tbody></tbody></table></div>' +
+      '  <div id="acs-tabla-wrap">' +
+      '    <table id="acs-tabla-inicio" class="acs-tabla-sec"><thead id="acs-thead-inicio"></thead><tbody></tbody></table>' +
+      '    <table id="acs-tabla-aceptar" class="acs-tabla-sec" style="display:none"><thead id="acs-thead-aceptar"></thead><tbody></tbody></table>' +
+      '    <table id="acs-tabla-cerrar" class="acs-tabla-sec" style="display:none"><thead id="acs-thead-cerrar"></thead><tbody></tbody></table>' +
+      '    <table id="acs-tabla-facturas" class="acs-tabla-sec" style="display:none"><thead id="acs-thead-facturas"></thead><tbody></tbody></table>' +
+      '  </div>' +
       '</div>';
     var hubPane = ET.ui.tab('acs', 'ACS', 10, 470);
     hubPane.appendChild(panel);
@@ -2880,7 +2912,7 @@
     document.head.appendChild(fa);
 
     var BOTONES = {
-      inicio: ['<i class="fa-solid fa-play"></i> Procesar todo el rango', 'principal', 1, 1, 1, 0, 1],
+      inicio: [null, null, 0, 1, 1, 0, 1],
       aceptar: ['<i class="fa-solid fa-check"></i> Aceptar pendientes', 'principal', 1, 1, 0, 0, 0],
       despachar: ['<i class="fa-solid fa-truck"></i> Despachar pendientes', 'principal', 1, 1, 0, 0, 0],
       recepcionar: ['<i class="fa-solid fa-box"></i> Recepcionar pendientes', 'principal', 1, 1, 0, 0, 0],
@@ -2892,17 +2924,28 @@
     function actualizarBotones(tab) {
       var cfg = BOTONES[tab] || BOTONES.inicio;
       for (var i = 0; i < IDS_BOTON.length; i++) {
-        panel.querySelector('#acs-' + IDS_BOTON[i]).style.display = cfg[i + 2] ? 'inline-block' : 'none';
+        var el = panel.querySelector('#acs-' + IDS_BOTON[i]);
+        if (el) el.style.display = cfg[i + 2] ? 'inline-block' : 'none';
       }
       if (cfg[0]) {
         var ejecutar = panel.querySelector('#acs-ejecutar');
-        ejecutar.innerHTML = cfg[0];
-        ejecutar.className = cfg[1] ? 'acs-btn acs-btn-principal' : 'acs-btn';
+        if (ejecutar) {
+          ejecutar.innerHTML = cfg[0];
+          ejecutar.className = cfg[1] ? 'acs-btn acs-btn-principal' : 'acs-btn';
+        }
       }
+      /* Cabeceras: cada tabla tiene su propio thead. */
+      var tablaId = TABLA_POR_TAB[tab] || 'inicio';
       var extra = tab === 'facturas' ? '<th>Factura</th>' : tab === 'cerrar' ? '<th>Motivo de cierre</th>' : '';
-      panel.querySelector('#acs-thead').innerHTML = (tab === 'inicio' || tab === 'cerrar' || tab === 'facturas')
-        ? '<tr><th></th><th>Registro</th><th>Estatus</th><th>Volumen</th><th>Fecha</th><th>Permiso</th>' + extra + '</tr>'
-        : '<tr><th>Módulo</th><th>Permiso</th><th>Registro</th><th>Estado</th><th>Detalle</th></tr>';
+      var theadCompras = '<tr><th></th><th>Registro</th><th>Estatus</th><th>Volumen</th><th>Fecha</th><th>Permiso</th>' + extra + '</tr>';
+      var theadAcciones = '<tr><th>Módulo</th><th>Permiso</th><th>Registro</th><th>Estado</th><th>Detalle</th></tr>';
+      var thead = panel.querySelector('#acs-thead-' + tablaId);
+      if (thead) thead.innerHTML = (tab === 'inicio' || tab === 'cerrar' || tab === 'facturas') ? theadCompras : theadAcciones;
+      /* Mostrar solo la tabla del tab activo. */
+      var tablas = panel.querySelectorAll('.acs-tabla-sec');
+      for (var t = 0; t < tablas.length; t++) {
+        tablas[t].style.display = tablas[t].id === 'acs-tabla-' + tablaId ? 'table' : 'none';
+      }
       panel.querySelector('#acs-acciones').style.display = tab === 'facturas' ? 'none' : 'grid';
       panel.querySelector('#acs-facturas-acciones').style.display = tab === 'facturas' ? 'flex' : 'none';
     }
@@ -2955,18 +2998,19 @@
       descargarFormatosRango();
     });
     panel.querySelector('#acs-detener-facturas').addEventListener('click', detener);
-    var tbody = panel.querySelector('#acs-tabla tbody');
+    var tablaWrap = panel.querySelector('#acs-tabla-wrap');
     function filasConCheckbox() {
-      return Array.prototype.slice.call(tbody.querySelectorAll('tr')).filter(function (tr) {
+      var tb = tbodyActivo();
+      return tb ? Array.prototype.slice.call(tb.querySelectorAll('tr')).filter(function (tr) {
         return tr.querySelector('input[type="checkbox"]');
-      });
+      }) : [];
     }
-    tbody.addEventListener('change', function (ev) {
+    tablaWrap.addEventListener('change', function (ev) {
       var tr = ev.target.closest('tr');
       if (tr && ev.target.type === 'checkbox') tr.setAttribute('aria-selected', ev.target.checked ? 'true' : 'false');
       actualizarResumen();
     });
-    tbody.addEventListener('keydown', function (ev) {
+    tablaWrap.addEventListener('keydown', function (ev) {
       var tr = ev.target.closest('tr');
       if (!tr) return;
       var filasVisibles = filasConCheckbox();
@@ -3066,20 +3110,20 @@
     '#acs-prog-text{position:absolute;top:0;right:8px;line-height:20px;font-size:13px;color:var(--ui-fg);}' +
     '#acs-summary{padding:6px 12px;color:var(--ui-muted);font-size:13px;background:var(--ui-bg);border-bottom:1px solid var(--ui-border);}' +
     '#acs-tabla-wrap{max-height:clamp(200px,40vh,480px);overflow:auto;background:var(--ui-bg);border-top:1px solid var(--ui-border);}' +
-    '#acs-tabla{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;}' +
-    '#acs-tabla th{background:var(--ui-bg);color:var(--ui-fg);border-bottom:1px solid var(--ui-border-strong);padding:6px;text-align:left;font-weight: 400;position:sticky;top:0;z-index:1;}' +
-    '#acs-tabla td{border-bottom:1px solid var(--ui-border);padding:6px;color:var(--ui-fg);overflow-wrap:anywhere;}' +
-    '#acs-tabla tbody tr:nth-child(even){background:#f5f5f5;}' +
-    '#acs-tabla tbody tr:focus-visible{outline:2px solid var(--ui-focus);outline-offset:-2px;}' +
+    '.acs-tabla-sec{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;}' +
+    '.acs-tabla-sec th{background:var(--ui-bg);color:var(--ui-fg);border-bottom:1px solid var(--ui-border-strong);padding:6px;text-align:left;font-weight: 400;position:sticky;top:0;z-index:1;}' +
+    '.acs-tabla-sec td{border-bottom:1px solid var(--ui-border);padding:6px;color:var(--ui-fg);overflow-wrap:anywhere;}' +
+    '.acs-tabla-sec tbody tr:nth-child(even){background:#f5f5f5;}' +
+    '.acs-tabla-sec tbody tr:focus-visible{outline:2px solid var(--ui-focus);outline-offset:-2px;}' +
     '.acs-motivo{width:100%;min-width:120px;border:1px solid var(--ui-border-input);background:var(--ui-bg);color:var(--ui-fg);font:inherit;font-size:13px;padding:3px 5px;border-radius:0;}' +
     '.acs-motivo:focus{border-color:var(--ui-focus);box-shadow:0 0 8px rgba(102,175,233,.6);outline:0;}' +
     '.acs-motivo-msg{display:block;color:var(--ui-err-fg);font-size:12px;}' +
     '#acs-facturas-acciones{flex-wrap:wrap;}' +
     '#acs-facturas-acciones .acs-opt{flex:1 1 100%;}' +
-    '#acs-tabla tbody tr.acs-factura-ok{background:var(--ui-ok-bg);}' +
+    '.acs-tabla-sec tbody tr.acs-factura-ok{background:var(--ui-ok-bg);}' +
     '.acs-est.ok{color:var(--ui-ok-fg);}' +
     '.acs-est.fail,.acs-fail{color:var(--ui-err-fg);}' +
-    '#acs-tabla tbody tr.acs-problema,#acs-tabla tbody tr.acs-problema td{color:var(--ui-err-fg);font-weight:bold;}'
+    '.acs-tabla-sec tbody tr.acs-problema,.acs-tabla-sec tbody tr.acs-problema td{color:var(--ui-err-fg);font-weight:bold;}'
   );
 
   // Export para pruebas en Node. En el navegador se ignora.
@@ -3473,6 +3517,79 @@ function partesFecha(f) {
     return Number.isFinite(n) && n === 0;
   }
 
+  function esRechazo(r) {
+    if (!r) return false;
+    if (/rechaz/i.test(String(r.op || ''))) return true;
+    if (/rechaz/i.test(etiquetaSubtipo(r))) return true;
+    if (/rechaz/i.test(String(r.estadoCadena || ''))) return true;
+    if (r.it && (/rechaz/i.test(String(r.it.tipoAcuse || '')) || /rechaz/i.test(String(r.it.estatus || '')))) return true;
+    const o = (r.c && r.c.o) || {};
+    return Object.values(o).some(v => /rechaz/i.test(String(v)));
+  }
+
+  function esCompraCero(r) {
+    if (!r) return false;
+    const deCompra = (r.op === 'COMPRA') || /COMPRA/i.test(etiquetaSubtipo(r));
+    if (!deCompra) return false;
+    if (esErrorCancelado(r)) return true;
+    const o = (r.c && r.c.o) || {};
+    const clavesVol = Object.keys(o).filter(k => /volumen/i.test(k));
+    if (clavesVol.length > 0 && clavesVol.every(k => volumenVacio(o[k]) || esCero(o[k]))) return true;
+    return false;
+  }
+
+  function volumenDeAcuse(r) {
+    const o = (r && r.c && r.c.o) || {};
+    for (const k of Object.keys(o)) {
+      if (/volumen/i.test(k)) {
+        const v = o[k];
+        if (v !== null && v !== undefined && String(v).trim() !== '') {
+          const n = parseFloat(String(v).replace(/[,\s]/g, ''));
+          if (Number.isFinite(n)) return n;
+        }
+      }
+    }
+    return null;
+  }
+
+  function tieneVolumenIncoherente(r) {
+    const o = (r && r.c && r.c.o) || {};
+    const solKey = Object.keys(o).find(k => /volumen.*solicit/i.test(k));
+    const entKey = Object.keys(o).find(k => /volumen.*(entreg|despach|recep)/i.test(k));
+    if (solKey && entKey) {
+      const sol = parseFloat(String(o[solKey] || '').replace(/[,\s]/g, ''));
+      const ent = parseFloat(String(o[entKey] || '').replace(/[,\s]/g, ''));
+      if (Number.isFinite(sol) && Number.isFinite(ent) && sol > 0 && ent > 0 && sol !== ent) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function esProblema(r, grupo) {
+    if (!r) return false;
+    if (esCompraCero(r) || esRechazo(r) || tieneVolumenIncoherente(r) || esErrorCancelado(r)) return true;
+    const nor = String(r.nor || '').trim();
+    if (nor && nor !== 'SIN_NOR' && Array.isArray(grupo)) {
+      const iguales = grupo.filter(x => String(x && x.nor || '').trim() === nor);
+      if (iguales.length > 1) {
+        if (iguales.some(x => esCompraCero(x) || esRechazo(x) || tieneVolumenIncoherente(x) || esErrorCancelado(x))) return true;
+        const vols = iguales.map(volumenDeAcuse).filter(v => v !== null);
+        if (new Set(vols).size > 1) return true;
+      }
+    }
+    return false;
+  }
+
+  function identificarProblemas(filas) {
+    const problemas = [], normales = [];
+    for (const r of filas || []) {
+      if (esProblema(r, filas)) problemas.push(r);
+      else normales.push(r);
+    }
+    return { normales, problemas };
+  }
+
   // ---------- Sigla del subtipo = VERBO + R + TIPO (ARR, CRC, NRC, RRC, DRC...) ----------
   const PARE = new Set('de del la el los las un una unos unas y o en a al por con para sobre acuse acuses no num numero folio codigo tipo estado solicitud fecha'.split(' '));
   const TIPOS = ('compra C COMPRA|compras C COMPRA|venta V VENTA|ventas V VENTA|recepcion R RECEPCION|recepciones R RECEPCION|' +
@@ -3644,7 +3761,7 @@ function partesFecha(f) {
 
   // Export para node:test. En el navegador se ignora.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision, esErrorCancelado, conTope, esPdf, ddmmaaaa };
+    module.exports = { dmy, semanaDe, semanaISO, fechasCadena, fechaOpDe, labelDe, tipoOp, subtipo, parseCadenaTexto, permisosDeTabla, gruposPorSubtipo, etiquetaSubtipo, cmpSubtipo, partesFecha, nombreDeEstacion, avance, q, TOPE_PDF, pendientesPrefetch, guardarCache, permisoEnPantalla, motivoRevision, esErrorCancelado, conTope, esPdf, ddmmaaaa, esRechazo, esCompraCero, volumenDeAcuse, tieneVolumenIncoherente, esProblema, identificarProblemas };
   }
 
   // ===================== Arranque DOM =====================
@@ -4634,8 +4751,40 @@ function partesFecha(f) {
       for (const g of gruposPorSubtipo(filas)) t('•  ' + g.label + ' (' + g.n + ')', 14, true, 56, y -= 28);
     }
 
+    // Separador para mostrar errores/cancelados: mismo formato que la portada pero 50% más compacto.
+    function portadaProblemas(doc, fuentes, perm, filas) {
+      let p = doc.addPage(PDFLib.PageSizes.A4);
+      const ancho = p.getWidth() - 112;
+      const t = (txt, size, bold, x, y) => {
+        const font = bold ? fuentes.fb : fuentes.f;
+        let s = size;
+        const w = font.widthOfTextAtSize(txt, s);
+        if (w > ancho) { s = Math.floor(size * ancho / w); }
+        const px = x === 'center' ? (p.getWidth() - font.widthOfTextAtSize(txt, s)) / 2 : x;
+        p.drawText(txt, { x: px, y: y, size: s, font: font });
+      };
+      const f1 = partesFecha(periodo ? periodo.d1 : filas[0].fOp);
+      const f2 = partesFecha(periodo ? periodo.d2 : filas[filas.length - 1].fOp);
+      const razon = (filas.map(r => (r.p && r.p.razon) || r.razon || '').find(Boolean) || 'SIN_DATO');
+      const estacion = nombreDeEstacion(perm) || razon;
+      const mes = MESES3[f1.m - 1] || '';
+      const iso = semanaISO(new Date(f1.a || 2000, (f1.m || 1) - 1, f1.d || 1));
+      const semanaAno = Number(iso.split('-W')[1]);
+      const anioISO = iso.split('-W')[0];
+      let y = 760;
+      t('ERRORES / CANCELADOS / RECHAZADOS', 18, true, 'center', y);
+      t(perm === 'SIN_PERMISO' ? 'SIN PERMISO' : perm, 18, true, 'center', y -= 26);
+      t(estacion, 18, true, 'center', y -= 25);
+      t('PERIODO ' + String(f1.d).padStart(2, '0') + ' ' + mes + ' – ' + String(f2.d).padStart(2, '0') + ' ' + (MESES3[f2.m - 1] || ''), 13, false, 56, y -= 33);
+      t('SEMANA ' + semanaAno + ' DEL AÑO ' + anioISO, 11, true, 56, y -= 28);
+      t('RAZÓN SOCIAL: ' + razon, 11, true, 56, y -= 23);
+      t('ACUSES CON ERROR / CANCELADOS: ' + filas.length, 11, false, 56, y -= 23);
+      y -= 15;
+      for (const g of gruposPorSubtipo(filas)) t('•  ' + g.label + ' (' + g.n + ')', 9, true, 56, y -= 14);
+    }
+
     // Hoja anexa a la portada: los códigos de registro de cada subtipo, en 10 pt.
-    function anexoCodigos(doc, fuentes, perm, filas) {
+    function anexoCodigos(doc, fuentes, perm, filas, titulo) {
       let p = doc.addPage(PDFLib.PageSizes.A4);
       const ancho = p.getWidth() - 112;
       const t = (txt, size, bold, x, yy) => {
@@ -4648,7 +4797,7 @@ function partesFecha(f) {
       };
       const salta = () => { p = doc.addPage(PDFLib.PageSizes.A4); y = 800; };
       let y = 790;
-      t('CÓDIGOS DE REGISTRO', 16, true, 56, y);
+      t(titulo || 'CÓDIGOS DE REGISTRO', 16, true, 56, y);
       t(perm === 'SIN_PERMISO' ? 'SIN PERMISO' : perm, 12, false, 56, y -= 26);
       y -= 34;
       for (const g of gruposPorSubtipo(filas)) {
@@ -4656,7 +4805,8 @@ function partesFecha(f) {
         t('•  ' + g.label + ' (' + g.n + ')', 12, true, 56, y);
         y -= 18;
         let linea = '';
-        for (const codigo of g.codigos) {
+        const codigos = (g.codigos || []).slice().sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+        for (const codigo of codigos) {
           const prueba = linea ? linea + '    ' + codigo : codigo;
           if (linea && fuentes.f.widthOfTextAtSize(prueba, 10) > ancho - 22) {
             t(linea, 10, false, 76, y);
@@ -4708,31 +4858,49 @@ function partesFecha(f) {
       for (const { perm, filas: grupo } of ests) {
         st('Uniendo ' + perm + '…');
 
-        // Se cargan primero los PDFs del grupo: si ninguno se puede leer no se
-        // añade su portada, para no dejar secciones sin acuses.
-        const srcs = [];
-        for (const r of grupo) {
-          const bytes = pdfCache.get(r.it.idAcuse);
-          if (!bytes) { saltados++; continue; }
-          try {
-            const src = await PDFLib.PDFDocument.load(bytes);
-            srcs.push(src);
-          } catch (e) { saltados++; r.pdfError = 'PDF ilegible: ' + e.message; }
-        }
-        if (!srcs.length) continue;
+        const { normales, problemas } = identificarProblemas(grupo);
+        const cargarSrcs = async (lista) => {
+          const res = [];
+          for (const r of lista) {
+            const bytes = pdfCache.get(r.it.idAcuse);
+            if (!bytes) { saltados++; continue; }
+            try {
+              const src = await PDFLib.PDFDocument.load(bytes);
+              res.push(src);
+            } catch (e) { saltados++; r.pdfError = 'PDF ilegible: ' + e.message; }
+          }
+          return res;
+        };
+
+        const srcsNorm = await cargarSrcs(normales);
+        const srcsProb = await cargarSrcs(problemas);
+        if (!srcsNorm.length && !srcsProb.length) continue;
 
         // La hoja queda entre secciones: se añade al empezar la siguiente, no tras la última.
         if (anterior) hojaSeparador(doc, { f, fb }, anterior.perm, anterior.acuses, perm);
 
-        // La portada de cada permiso queda delante de sus respectivos acuses.
-        portada(doc, { f, fb }, perm, grupo);
-        anexoCodigos(doc, { f, fb }, perm, grupo);
-
-        for (const src of srcs) {
-          const paginas = await doc.copyPages(src, src.getPageIndices());
-          paginas.forEach(pg => doc.addPage(pg));
-          nAcuses += paginas.length;
+        // 1. Bloque principal: acuses normales
+        if (srcsNorm.length) {
+          portada(doc, { f, fb }, perm, normales);
+          anexoCodigos(doc, { f, fb }, perm, normales);
+          for (const src of srcsNorm) {
+            const paginas = await doc.copyPages(src, src.getPageIndices());
+            paginas.forEach(pg => doc.addPage(pg));
+            nAcuses += paginas.length;
+          }
         }
+
+        // 2. Bloque final de errores/cancelados: separador compacto, segundo anexo y PDFs
+        if (srcsProb.length) {
+          portadaProblemas(doc, { f, fb }, perm, problemas);
+          anexoCodigos(doc, { f, fb }, perm, problemas, 'CÓDIGOS DE REGISTRO · ERRORES / CANCELADOS / RECHAZADOS');
+          for (const src of srcsProb) {
+            const paginas = await doc.copyPages(src, src.getPageIndices());
+            paginas.forEach(pg => doc.addPage(pg));
+            nAcuses += paginas.length;
+          }
+        }
+
         anterior = { perm: perm, acuses: grupo.length };
       }
       if (!nAcuses) { st('Ningún PDF se pudo unir'); return; }
@@ -4754,8 +4922,15 @@ function partesFecha(f) {
         const f = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
         const fb = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
         for (const { perm, filas: grupo } of ests) {
-          portada(doc, { f, fb }, perm, grupo);
-          anexoCodigos(doc, { f, fb }, perm, grupo);
+          const { normales, problemas } = identificarProblemas(grupo);
+          if (normales.length) {
+            portada(doc, { f, fb }, perm, normales);
+            anexoCodigos(doc, { f, fb }, perm, normales);
+          }
+          if (problemas.length) {
+            portadaProblemas(doc, { f, fb }, perm, problemas);
+            anexoCodigos(doc, { f, fb }, perm, problemas, 'CÓDIGOS DE REGISTRO · ERRORES / CANCELADOS / RECHAZADOS');
+          }
         }
         descargar(new Blob([await doc.save()], { type: 'application/pdf' }), 'portadas_' + rangoTag() + '.pdf');
         st('Portadas: ' + ests.length + ' estación(es) · ' + doc.getPageCount() + ' páginas');

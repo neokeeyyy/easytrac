@@ -336,3 +336,46 @@ test('ddmmaaaa formatea fechas validas y cae a 00000000 con invalidas', function
   assert.equal(api.ddmmaaaa(new Date('invalid')), '00000000');
   assert.equal(api.ddmmaaaa(null), '00000000');
 });
+
+test('esCompraCero detecta compra con volumen 0 o vacio', function () {
+  assert.equal(api.esCompraCero({ op: 'COMPRA', c: { o: { volumen_Solicitado: '0' } } }), true);
+  assert.equal(api.esCompraCero({ op: 'COMPRA', c: { o: { volumen: '' } } }), true);
+  assert.equal(api.esCompraCero({ op: 'COMPRA', c: { o: { volumen: '500' } } }), false);
+  assert.equal(api.esCompraCero({ op: 'VENTA', c: { o: { volumen: '0' } } }), false);
+});
+
+test('esRechazo detecta acuses con estatus o cadena de rechazo', function () {
+  assert.equal(api.esRechazo({ op: 'RECHAZO' }), true);
+  assert.equal(api.esRechazo({ sub: { texto: 'Rechazo de compra' } }), true);
+  assert.equal(api.esRechazo({ it: { estatus: 'Rechazada' } }), true);
+  assert.equal(api.esRechazo({ c: { o: { motivo: 'compra rechazada por volumen' } } }), true);
+  assert.equal(api.esRechazo({ op: 'COMPRA', sub: { texto: 'Nuevo registro de compra' } }), false);
+});
+
+test('tieneVolumenIncoherente detecta diferencias entre volumen solicitado y entregado', function () {
+  assert.equal(api.tieneVolumenIncoherente({ c: { o: { volumen_Solicitado: '1000', volumen_Entregado: '800' } } }), true);
+  assert.equal(api.tieneVolumenIncoherente({ c: { o: { volumen_Solicitado: '1000', volumen_Entregado: '1000' } } }), false);
+});
+
+test('identificarProblemas separa normales y problemas, agrupando disconformidades por NOR', function () {
+  const filas = [
+    // Caso 1: Compra en 0 -> problema
+    { nor: 'NOR-001', op: 'COMPRA', sub: { texto: 'Compra' }, c: { o: { volumen: '0' } } },
+    // Caso 2: Rechazo -> problema
+    { nor: 'NOR-002', op: 'COMPRA', sub: { texto: 'Rechazada' }, c: { o: { volumen: '1000' } } },
+    // Caso 3: Mismo NOR con disconformidad de volumen entre pasos (1000 vs 800) -> ambos a problemas
+    { nor: 'NOR-003', op: 'COMPRA', sub: { texto: 'Solicitud' }, c: { o: { volumen_Solicitado: '1000' } } },
+    { nor: 'NOR-003', op: 'RECEPCION', sub: { texto: 'Recepción' }, c: { o: { volumen_Recepcionado: '800' } } },
+    // Caso 4: Normales con mismo NOR y mismo volumen -> normales
+    { nor: 'NOR-004', op: 'COMPRA', sub: { texto: 'Solicitud' }, c: { o: { volumen_Solicitado: '500' } } },
+    { nor: 'NOR-004', op: 'RECEPCION', sub: { texto: 'Recepción' }, c: { o: { volumen_Recepcionado: '500' } } },
+    // Caso 5: Normal sin NOR
+    { nor: 'SIN_NOR', op: 'PRECIO', sub: { texto: 'Precios' }, c: { o: {} } },
+  ];
+
+  const { normales, problemas } = api.identificarProblemas(filas);
+  assert.equal(problemas.length, 4); // NOR-001, NOR-002, y los 2 de NOR-003
+  assert.deepEqual(problemas.map(r => r.nor), ['NOR-001', 'NOR-002', 'NOR-003', 'NOR-003']);
+  assert.equal(normales.length, 3); // los 2 de NOR-004 y SIN_NOR
+  assert.deepEqual(normales.map(r => r.nor), ['NOR-004', 'NOR-004', 'SIN_NOR']);
+});

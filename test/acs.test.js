@@ -308,7 +308,7 @@ test('cerrarEntrega: un JSON con result=false deja ok=false y el HTML sigue sien
 
 test('subir omite una compra no cerrada', async () => {
   const { JSDOM } = require('jsdom');
-  const dom = new JSDOM('<!doctype html><html><body><table id="acs-tabla"><tbody></tbody></table><p id="acs-status"></p></body></html>');
+  const dom = new JSDOM('<!doctype html><html><body><table id="acs-tabla-facturas" class="acs-tabla-sec"><tbody></tbody></table><p id="acs-status"></p></body></html>');
   const previo = globalThis.document;
   globalThis.document = dom.window.document;
   globalThis.EasyTrac.core.http.config.DELAY_MS = 1;
@@ -325,7 +325,7 @@ test('subir omite una compra no cerrada', async () => {
 
 test('una fila con HTML de la API lo deja como texto', () => {
   const { JSDOM } = require('jsdom');
-  const dom = new JSDOM('<!doctype html><html><body><table id="acs-tabla"><tbody></tbody></table></body></html>');
+  const dom = new JSDOM('<!doctype html><html><body><table id="acs-tabla-inicio" class="acs-tabla-sec"><tbody></tbody></table></body></html>');
   const previo = globalThis.document;
   globalThis.document = dom.window.document;
   const malicioso = '<img src=x onerror=alert(1)>';
@@ -339,7 +339,7 @@ test('una fila con HTML de la API lo deja como texto', () => {
   }, 0, 'acs-cand-check', { motivo: true });
 
   assert.equal(tr.children[1].textContent, malicioso);
-  assert.equal(dom.window.document.querySelectorAll('#acs-tabla tbody img').length, 0);
+  assert.equal(dom.window.document.querySelectorAll('#acs-tabla-inicio tbody img').length, 0);
   assert.ok(tr.querySelector('.acs-motivo[data-idx="0"]'));
   assert.ok(tr.querySelector('.acs-motivo-msg'));
 
