@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
 const api = require('../src/60-precios-cne.js');
-const { norm, estadoKey, muniKey, clave, num, parseCneItems, mapaCne, precioDe, fechaPdf, planPermiso } = api;
+const { norm, estadoKey, muniKey, clave, num, parseCneItems, mapaCne, precioDe, fechaPdf, llenarTabla, planPermiso } = api;
 
 const item = (str, x, y) => ({ str, transform: [1, 0, 0, 1, x, y] });
 
@@ -84,6 +85,76 @@ test('fechaPdf lee el rango del PDF', () => {
   assert.equal(f.getMonth(), 10);
   assert.equal(f.getDate(), 8);
   assert.equal(fechaPdf('', ''), null);
+});
+
+test('fechaPdf lee la fecha del nombre del archivo', () => {
+  const f = fechaPdf(
+    'https://www.gob.mx/cms/uploads/attachment/file/1117388/PRECIOS_MAXIMOS_VIGENTES_DEL_22_al_28_de_noviembre_DE_2026.pdf',
+    'Descargar documento'
+  );
+  assert.equal(f.getFullYear(), 2026);
+  assert.equal(f.getMonth(), 10);
+  assert.equal(f.getDate(), 22);
+});
+
+test('llenarTabla llena las filas visibles y respeta capturados', () => {
+  const dom = new JSDOM(`<table>
+    <thead><tr><th>Estado</th><th>Municipio</th><th>Localidad</th><th>Precio</th><th>Fecha</th><th>Hora</th></tr></thead>
+    <tbody>
+      <tr><td>Jalisco</td><td>Ojuelos de Jalisco</td><td>Centro</td><td><input id="PrecioNuevo-1"></td><td><input id="FechaNueva-1"></td><td><input id="HoraNueva-1"></td></tr>
+      <tr><td>Jalisco</td><td>Ojuelos de Jalisco</td><td>La Paz</td><td><input id="PrecioNuevo-2"></td><td><input id="FechaNueva-2"></td><td><input id="HoraNueva-2"></td></tr>
+      <tr><td>Jalisco</td><td>Ojuelos de Jalisco</td><td>Otro</td><td><input id="PrecioNuevo-3" value="12.00"></td><td><input id="FechaNueva-3"></td><td><input id="HoraNueva-3"></td></tr>
+      <tr><td>Jalisco</td><td>Desconocido</td><td>X</td><td><input id="PrecioNuevo-4"></td></tr>
+      <tr><td>Jalisco</td><td>Ojuelos de Jalisco</td><td>Sin campo</td><td>n/a</td></tr>
+    </tbody>
+  </table>`);
+  const win = dom.window;
+  const Evento = global.Event;
+  global.Event = win.Event;
+  try {
+    const tabla = win.document.querySelector('table');
+    const mapa = new Map([[clave('Jalisco', 'Ojuelos de Jalisco'), { kg: 21.84, litro: 11.79 }]]);
+    const cuenta = llenarTabla(tabla, { estado: 0, muni: 1, loc: 2 }, mapa, 'litro', '23/11/2026', '14:10', true);
+
+    assert.equal(cuenta.ok, 2);
+    assert.equal(cuenta.sin, 1);
+    assert.equal(cuenta.sinCampo, 1);
+    assert.deepEqual([...cuenta.faltan], ['Jalisco / Desconocido']);
+    assert.equal(win.document.querySelector('#PrecioNuevo-1').value, '11.79');
+    assert.equal(win.document.querySelector('#PrecioNuevo-2').value, '11.79');
+    assert.equal(win.document.querySelector('#PrecioNuevo-3').value, '12.00');
+    assert.equal(win.document.querySelector('#FechaNueva-1').value, '23/11/2026');
+    assert.equal(win.document.querySelector('#HoraNueva-2').value, '14:10');
+    assert.equal(win.document.querySelector('#PrecioNuevo-4').value, '');
+  } finally {
+    global.Event = Evento;
+  }
+});
+
+test('llenarTabla sobrescribe el vigente prefijado y respeta el capturado a mano', () => {
+  const dom = new JSDOM(`<table><tbody>
+    <tr><td class="id-bodega">Jalisco</td><td class="capacidad-recipiente">Ojuelos de Jalisco</td><td class="cantidad-recipiente">Centro</td><td class="cantidad-vendida">11.79</td>
+      <td><input id="PrecioNuevo-1" value="11.79"></td><td><input id="FechaNueva-1" value="09/11/2026"></td><td><input id="HoraNueva-1" value="15:20"></td></tr>
+    <tr><td class="id-bodega">Jalisco</td><td class="capacidad-recipiente">Ojuelos de Jalisco</td><td class="cantidad-recipiente">La Paz</td><td class="cantidad-vendida">11.79</td>
+      <td><input id="PrecioNuevo-2" value="11.50"></td><td><input id="FechaNueva-2" value="09/11/2026"></td><td><input id="HoraNueva-2" value="15:20"></td></tr>
+  </tbody></table>`);
+  const win = dom.window;
+  const Evento = global.Event;
+  global.Event = win.Event;
+  try {
+    const tabla = win.document.querySelector('table');
+    const mapa = new Map([[clave('Jalisco', 'Ojuelos de Jalisco'), { kg: 21.84, litro: 12.34 }]]);
+    const cuenta = llenarTabla(tabla, { estado: -1, muni: -1, loc: -1 }, mapa, 'litro', '23/11/2026', '14:10', true);
+
+    assert.equal(cuenta.ok, 1);
+    assert.equal(win.document.querySelector('#PrecioNuevo-1').value, '12.34');
+    assert.equal(win.document.querySelector('#FechaNueva-1').value, '23/11/2026');
+    assert.equal(win.document.querySelector('#HoraNueva-1').value, '14:10');
+    assert.equal(win.document.querySelector('#PrecioNuevo-2').value, '11.50');
+    assert.equal(win.document.querySelector('#FechaNueva-2').value, '09/11/2026');
+  } finally {
+    global.Event = Evento;
+  }
 });
 
 test('planPermiso arma items de auto-tanque y recipiente con precio CNE', () => {

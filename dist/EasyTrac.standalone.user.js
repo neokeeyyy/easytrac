@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EasyTRAC
 // @namespace    easytrac
-// @version      1.1.20
+// @version      1.1.21
 // @description  Toolkit SIRETRAC en un solo sidebar: ACS, acuses, venta, fecha, precios CNE y traspasos.
 // @author       ojuel
 // @match        https://siretrac.cne.gob.mx/*
@@ -25,7 +25,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.20'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.21'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -6918,7 +6918,8 @@ function partesFecha(f) {
   }
 
   function fechaPdf(href, texto) {
-    var s = norm(href + ' ' + (texto || ''));
+    // Los archivos de la CNE traen la fecha con guiones bajos: DEL_22_AL_28...
+    var s = norm(href + ' ' + (texto || '')).replace(/_/g, ' ');
     var m = /DEL (\d{1,2}) AL (\d{1,2}) DE ([A-Z]+) DE (\d{4})/.exec(s)
       || /(\d{1,2}) AL (\d{1,2}) DE ([A-Z]+) DE (\d{4})/.exec(s);
     if (!m) return null;
@@ -6944,8 +6945,11 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
       return new Promise(function (res, rej) {
         GM_xmlhttpRequest({
           method: 'GET', url: url, timeout: 90000, responseType: tipo,
-          onload: function (r) { (r.status >= 200 && r.status < 300) ? res(r.response) : rej(new Error('HTTP ' + r.status)); },
-          onerror: function () { rej(new Error('Error de red')); },
+          onload: function (r) {
+            if (r.status < 200 || r.status >= 300) return rej(new Error('HTTP ' + r.status));
+            res(typeof r.response === 'string' || tipo === 'arraybuffer' ? r.response : r.responseText);
+          },
+          onerror: function (r) { rej(new Error((r && r.error) || 'Error de red')); },
           ontimeout: function () { rej(new Error('Tiempo agotado')); }
         });
       });
@@ -6953,7 +6957,7 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
     if (typeof GM !== 'undefined' && GM && GM.xmlHttpRequest) {
       return GM.xmlHttpRequest({ method: 'GET', url: url, timeout: 90000, responseType: tipo }).then(function (r) {
         if (r.status < 200 || r.status >= 300) throw new Error('HTTP ' + r.status);
-        return r.response;
+        return r.response != null ? r.response : r.responseText;
       });
     }
     return fetch(url).then(function (r) {
@@ -6962,10 +6966,18 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
     });
   }
 
+  function csrf() {
+    var i = document.querySelector('input[name="__RequestVerificationToken"]');
+    return i && i.value ? i.value : '';
+  }
+
   async function listasPrecios(fecha) {
+    var headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+    var t = csrf();
+    if (t) headers.RequestVerificationToken = t;
     var r = await fetch('/GasLP/Precios/GetListaPreciosXpermiso', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: headers,
       body: 'fecha=' + encodeURIComponent(fecha),
       credentials: 'include'
     });
@@ -7021,41 +7033,50 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
     return { estado: buscar(/^(ESTADO|ENTIDAD)/), muni: buscar(/MUNICIPIO/), loc: buscar(/LOCALIDAD/) };
   }
 
-  function texto(tr, i) {
-    var td = tr.children[i];
+  function textoDe(td) {
     if (!td) return '';
     var inp = td.querySelector('input, select');
     return (inp ? inp.value : td.textContent).replace(/\s+/g, ' ').trim();
   }
 
-  function filasDom(tabla, idx) {
-    var trs = tabla.querySelectorAll('tbody tr');
-    var m = new Map();
-    for (var i = 0; i < trs.length; i++) {
-      var tr = trs[i];
-      var e = texto(tr, idx.estado), mu = texto(tr, idx.muni), lo = idx.loc >= 0 ? texto(tr, idx.loc) : '';
-      if (!e || !mu) continue;
-      var par = clave(e, mu);
-      if (!m.has(par)) m.set(par, tr);
-      if (lo) m.set(par + '|' + norm(lo), tr);
-    }
-    return m;
-  }
-
-  function buscarFila(m, estado, muni, loc) {
-    var par = clave(estado, muni);
-    if (loc) {
-      var tr = m.get(par + '|' + norm(loc));
-      if (tr) return tr;
-    }
-    return m.get(par) || null;
-  }
+  function texto(tr, i) { return textoDe(tr.children[i]); }
 
   function setVal(inp, v) {
+    // Vacía primero: algunos campos con máscara conservan el texto anterior.
+    inp.value = '';
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
     inp.value = v;
     inp.dispatchEvent(new Event('input', { bubbles: true }));
     inp.dispatchEvent(new Event('change', { bubbles: true }));
     inp.dispatchEvent(new Event('blur', { bubbles: true }));
+  }
+
+  // Llena las filas visibles de una tabla. No depende del listado del permiso:
+  // si la tabla está en pantalla, sus datos ya vienen del servidor.
+  function llenarTabla(tabla, idx, mapa, modo, fTxt, hTxt, respetar) {
+    var cuenta = { ok: 0, sin: 0, sinCampo: 0, faltan: new Set() };
+    var trs = tabla.querySelectorAll('tbody tr');
+    for (var i = 0; i < trs.length; i++) {
+      var tr = trs[i];
+      // Clases fijas de SIRETRAC; los índices del thead quedan como respaldo.
+      var estado = textoDe(tr.querySelector('td.id-bodega')) || texto(tr, idx.estado);
+      var muni = textoDe(tr.querySelector('td.capacidad-recipiente')) || texto(tr, idx.muni);
+      if (!estado || !muni) continue;
+      var p = precioDe(mapa, estado, muni);
+      if (!p) { cuenta.sin++; cuenta.faltan.add(estado + ' / ' + muni); continue; }
+      var inp = tr.querySelector('input[id^="PrecioNuevo-"], input[name^="PrecioNuevo"], input[id*="PrecioNuevo"]');
+      if (!inp) { cuenta.sinCampo++; continue; }
+      // El servidor prefija el precio vigente: eso no es un capturado manual.
+      var vigente = num(textoDe(tr.querySelector('td.cantidad-vendida')));
+      if (respetar && num(inp.value) > 0 && num(inp.value) !== vigente) continue;
+      setVal(inp, (modo === 'kg' ? p.kg : p.litro).toFixed(2));
+      var f = tr.querySelector('input[id^="FechaNueva-"], input[name^="FechaNueva"]');
+      var h = tr.querySelector('input[id^="HoraNueva-"], input[name^="HoraNueva"]');
+      if (f) setVal(f, fTxt);
+      if (h) setVal(h, hTxt);
+      cuenta.ok++;
+    }
+    return cuenta;
   }
 
   function fechaUS(txt) {
@@ -7160,20 +7181,16 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
       var d = new Date(fInp.value + 'T' + hInp.value + ':00');
       if (isNaN(d)) throw new Error('Fecha u hora inválida');
       var fTxt = fechaTxt(d), hTxt = horaLocal(d);
-      decir('Consultando los precios del permiso…');
-      var fRegistro = document.getElementById('idFechaRegistro');
-       var fechaConsulta = fRegistro && fRegistro.value ? fRegistro.value : (fechaLocal(new Date()) + ' ' + horaLocal(new Date()) + ':00');
-       var j = await listasPrecios(fechaConsulta);
+      decir('Llenando precios…');
       var respetar = document.getElementById('cne-skip').checked;
-      var ok = 0, sin = 0, sinCampo = 0;
+      var ok = 0, sin = 0, sinCampo = 0, tablas = 0;
       var faltan = new Set();
       var puestos = new Set();
       for (var li = 0; li < LISTAS.length; li++) {
         var L = LISTAS[li];
-        var lista = j[L.lista];
-        if (!Array.isArray(lista)) continue;
         var tabla = document.getElementById(L.tabla);
         if (!tabla) continue;
+        tablas++;
         var idx = indices(tabla);
         if (idx.estado < 0 || idx.muni < 0) { sinCampo++; continue; }
         if (!puestos.has(L.modo)) {
@@ -7182,29 +7199,11 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
           if (fAll) setVal(fAll, fTxt);
           if (hAll) setVal(hAll, hTxt);
         }
-        var dom = filasDom(tabla, idx);
-        for (var ri = 0; ri < lista.length; ri++) {
-          var row = lista[ri];
-          var estado = row.estado, muni = row.municipio;
-          if (!estado || !muni) { sinCampo++; continue; }
-          var p = precioDe(mapa, estado, muni);
-          if (!p) { sin++; faltan.add(estado + ' / ' + muni); continue; }
-          var tr = buscarFila(dom, estado, muni, idx.loc >= 0 ? row.localidad : '');
-          if (!tr) { sinCampo++; continue; }
-          var inp = row.idPrecio != null ? document.getElementById('PrecioNuevo-' + row.idPrecio) : null;
-          if (!inp) inp = tr.querySelector('input[id^="PrecioNuevo-"]');
-          if (!inp) { sinCampo++; continue; }
-          if (respetar && inp.value && num(inp.value) > 0) continue;
-          setVal(inp, (L.modo === 'kg' ? p.kg : p.litro).toFixed(2));
-          var f = (row.idPrecio != null ? document.getElementById('FechaNueva-' + row.idPrecio) : null)
-            || tr.querySelector('input[id^="FechaNueva-"]');
-          var h = (row.idPrecio != null ? document.getElementById('HoraNueva-' + row.idPrecio) : null)
-            || tr.querySelector('input[id^="HoraNueva-"]');
-          if (f) setVal(f, fTxt);
-          if (h) setVal(h, hTxt);
-          ok++;
-        }
+        var cuenta = llenarTabla(tabla, idx, mapa, L.modo, fTxt, hTxt, respetar);
+        ok += cuenta.ok; sin += cuenta.sin; sinCampo += cuenta.sinCampo;
+        cuenta.faltan.forEach(function (x) { faltan.add(x); });
       }
+      if (!tablas) throw new Error('No encontré las tablas de precios; la página cambió');
       if (sin) console.warn('CNE sin coincidencia:', Array.from(faltan));
       var muestra = Array.from(faltan).slice(0, 3).join('; ');
       decir('Listo: ' + ok + ' filas · ' + sin + ' sin coincidencia · ' + sinCampo + ' sin campo' + (sin ? ' (' + muestra + '…)' : ''));
@@ -7405,9 +7404,12 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
           var j = await listasPrecios(consulta);
           var plan = planPermiso(j, p, fmt, bulkMapa);
           if (!plan.items.length) { fallos.push((p.nombre || p.id) + ': sin cambios'); continue; }
+          var headers = { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' };
+          var t = csrf();
+          if (t) headers.RequestVerificationToken = t;
           var res = await fetch('/GasLP/Precios/InsertaPreciosNuevos2', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+            headers: headers,
             body: 'datos=' + encodeURIComponent(JSON.stringify(plan.items)) + '&cadenaAcuse=' + encodeURIComponent(plan.cadena),
             credentials: 'include'
           });
@@ -7448,7 +7450,7 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { norm: norm, estadoKey: estadoKey, muniKey: muniKey, clave: clave, num: num, parseCneItems: parseCneItems, mapaCne: mapaCne, precioDe: precioDe, fechaPdf: fechaPdf, planPermiso: planPermiso };
+    module.exports = { norm: norm, estadoKey: estadoKey, muniKey: muniKey, clave: clave, num: num, parseCneItems: parseCneItems, mapaCne: mapaCne, precioDe: precioDe, fechaPdf: fechaPdf, llenarTabla: llenarTabla, planPermiso: planPermiso };
   }
 
   if (typeof document !== 'undefined') {
