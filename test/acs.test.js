@@ -346,6 +346,28 @@ test('una fila con HTML de la API lo deja como texto', () => {
   globalThis.document = previo;
 });
 
+test('filaCompra no marca en rojo una aceptada con entregado 0 y si un volumen incoherente', () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><table id="acs-tabla-inicio" class="acs-tabla-sec"><tbody></tbody></table></body></html>');
+  const previo = globalThis.document;
+  globalThis.document = dom.window.document;
+  const base = {
+    idEstatus: 1, codigoRegistro: 'LP/1295/7/4334', fechaCompra: '23/11/2026',
+    permiso_Vendedor: 'LP/1295/DIST/PLA/2026'
+  };
+  const cero = acs.filaCompra(Object.assign({}, base, {
+    volumen_Solicitado: '1000', volumen_Entregado: '0.00'
+  }), 0, 'acs-cand-check');
+  const incoherente = acs.filaCompra(Object.assign({}, base, {
+    volumen_Solicitado: '1000', volumen_Entregado: '900'
+  }), 1, 'acs-cand-check');
+
+  assert.equal(cero.classList.contains('acs-problema'), false);
+  assert.equal(incoherente.classList.contains('acs-problema'), true);
+
+  globalThis.document = previo;
+});
+
 test('el PDF normaliza el volumen con comas y rechaza el vacio o cero', function () {
   let textos = [];
   const doc = new Proxy({}, {

@@ -6,7 +6,7 @@
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
   var ET = root.EasyTrac = root.EasyTrac || {};
 
-  ET.version = '1.1.21'; /* tools/build.mjs replace con la versión de package.json */
+  ET.version = '1.1.22'; /* tools/build.mjs replace con la versión de package.json */
 
   ET.log = function () {
     try { console.log.apply(console, ['[EasyTrac]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -2191,10 +2191,7 @@
     return secuencia(items, function (x) {
       var fila = modulo ? nuevaFila(modulo, permiso, x.codigoRegistro) : null;
       return accion(x).then(function (r) {
-        if (fila) {
-          fila.set(r.ok ? 'OK' : 'FALLO', r.msg);
-          if (r.aceptadaEnCero && fila.tr) fila.tr.classList.add('acs-problema');
-        }
+        if (fila) fila.set(r.ok ? 'OK' : 'FALLO', r.msg);
         progStep(verbo + ' ' + x.codigoRegistro + ' → ' + (r.ok ? 'OK' : 'FALLO') + (r.msg ? ' · ' + r.msg : ''));
       }).catch(function (e) {
         if (fila) fila.set('FALLO', e.message);
@@ -2226,11 +2223,8 @@
       })
       .then(function (res) {
         if (res.json && res.json.result === true) {
-          /* Detectar si la aceptación resultó con volumen 0 (fallo silencioso del servidor). */
-          var vol = res.json && (res.json.volumen_Aceptado || res.json.volumen || res.json.cantidad || 0);
-          if (vol !== undefined && Number(vol) === 0) {
-            return { ok: true, msg: 'AVISO: aceptada con volumen 0', aceptadaEnCero: true };
-          }
+          /* Aceptar no define volumen: el entregado se captura al despachar.
+             Marcar "0" aquí daba falsos positivos en toda aceptación. */
           return { ok: true, msg: '' };
         }
         return { ok: false, msg: (res.json && (res.json.mensaje || res.json.message)) || res.text.slice(0, 200) };
@@ -2637,13 +2631,13 @@
     tr.tabIndex = 0;
     tr.setAttribute('aria-selected', 'true');
 
-    // Rechazada, aceptada con 0 o volumen que no cuadra: la fila va en rojo y negrita.
+    // Rechazada o volumen que no cuadra: la fila va en rojo y negrita.
+    // Aceptada con entregado 0 es lo normal: el volumen llega al despachar.
     var solicitado = numeroPositivo(c.volumen_Solicitado);
     var entregado = numeroPositivo(c.volumen_Entregado);
     var rechazada = /rechaz/i.test(String(c.estatus || ''));
-    var aceptadaEnCero = Number(c.idEstatus) === 1 && entregado === 0 && solicitado > 0;
     var volumenIncoherente = solicitado > 0 && entregado > 0 && solicitado !== entregado;
-    if (rechazada || aceptadaEnCero || volumenIncoherente) tr.classList.add('acs-problema');
+    if (rechazada || volumenIncoherente) tr.classList.add('acs-problema');
 
     var tdCheck = document.createElement('td');
     var chk = document.createElement('input');
@@ -7045,7 +7039,7 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
       if (!estado || !muni) continue;
       var p = precioDe(mapa, estado, muni);
       if (!p) { cuenta.sin++; cuenta.faltan.add(estado + ' / ' + muni); continue; }
-      var inp = tr.querySelector('input[id^="PrecioNuevo-"], input[name^="PrecioNuevo"], input[id*="PrecioNuevo"]');
+      var inp = tr.querySelector('input[name^="PrecioNuevo"]:not([type="hidden"]), input[id^="PrecioNuevo-"]:not([type="hidden"]), input[id*="PrecioNuevo"]:not([type="hidden"])');
       if (!inp) { cuenta.sinCampo++; continue; }
       // El servidor prefija el precio vigente: eso no es un capturado manual.
       var vigente = num(textoDe(tr.querySelector('td.cantidad-vendida')));

@@ -244,7 +244,7 @@ function porDefecto() { var d = new Date(Date.now() + (MINUTO_MINIMO + MARGEN_MI
       if (!estado || !muni) continue;
       var p = precioDe(mapa, estado, muni);
       if (!p) { cuenta.sin++; cuenta.faltan.add(estado + ' / ' + muni); continue; }
-      var inp = tr.querySelector('input[id^="PrecioNuevo-"], input[name^="PrecioNuevo"], input[id*="PrecioNuevo"]');
+      var inp = tr.querySelector('input[name^="PrecioNuevo"]:not([type="hidden"]), input[id^="PrecioNuevo-"]:not([type="hidden"]), input[id*="PrecioNuevo"]:not([type="hidden"])');
       if (!inp) { cuenta.sinCampo++; continue; }
       // El servidor prefija el precio vigente: eso no es un capturado manual.
       var vigente = num(textoDe(tr.querySelector('td.cantidad-vendida')));

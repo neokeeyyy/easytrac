@@ -134,9 +134,9 @@ test('llenarTabla llena las filas visibles y respeta capturados', () => {
 test('llenarTabla sobrescribe el vigente prefijado y respeta el capturado a mano', () => {
   const dom = new JSDOM(`<table><tbody>
     <tr><td class="id-bodega">Jalisco</td><td class="capacidad-recipiente">Ojuelos de Jalisco</td><td class="cantidad-recipiente">Centro</td><td class="cantidad-vendida">11.79</td>
-      <td><input id="PrecioNuevo-1" value="11.79"></td><td><input id="FechaNueva-1" value="09/11/2026"></td><td><input id="HoraNueva-1" value="15:20"></td></tr>
+      <td><input type="hidden" id="hdPrecioNuevo-1" value=""><input id="PrecioNuevo-1" name="PrecioNuevo-1" value="11.79"></td><td><input id="FechaNueva-1" value="09/11/2026"></td><td><input id="HoraNueva-1" value="15:20"></td></tr>
     <tr><td class="id-bodega">Jalisco</td><td class="capacidad-recipiente">Ojuelos de Jalisco</td><td class="cantidad-recipiente">La Paz</td><td class="cantidad-vendida">11.79</td>
-      <td><input id="PrecioNuevo-2" value="11.50"></td><td><input id="FechaNueva-2" value="09/11/2026"></td><td><input id="HoraNueva-2" value="15:20"></td></tr>
+      <td><input type="hidden" id="hdPrecioNuevo-2" value=""><input id="PrecioNuevo-2" name="PrecioNuevo-2" value="11.50"></td><td><input id="FechaNueva-2" value="09/11/2026"></td><td><input id="HoraNueva-2" value="15:20"></td></tr>
   </tbody></table>`);
   const win = dom.window;
   const Evento = global.Event;
@@ -148,6 +148,7 @@ test('llenarTabla sobrescribe el vigente prefijado y respeta el capturado a mano
 
     assert.equal(cuenta.ok, 1);
     assert.equal(win.document.querySelector('#PrecioNuevo-1').value, '12.34');
+    assert.equal(win.document.querySelector('#hdPrecioNuevo-1').value, '');
     assert.equal(win.document.querySelector('#FechaNueva-1').value, '23/11/2026');
     assert.equal(win.document.querySelector('#HoraNueva-1').value, '14:10');
     assert.equal(win.document.querySelector('#PrecioNuevo-2').value, '11.50');
